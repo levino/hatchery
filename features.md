@@ -2,7 +2,7 @@
 
 ## Problem
 
-I develop across two machines (Linux laptop, Mac Studio) and want to run devcontainers on a Hetzner dedicated server. The existing tools (DevPod, Coder, GitHub Codespaces) each solve parts of this but come with significant baggage — local state that doesn't sync, Kubernetes dependencies, vendor lock-in, or proprietary protocols.
+I develop across two machines (Linux laptop, Mac Studio) and want to run devcontainers on a dedicated server. The existing tools (DevPod, Coder, GitHub Codespaces) each solve parts of this but come with significant baggage — local state that doesn't sync, Kubernetes dependencies, vendor lock-in, or proprietary protocols.
 
 I also need scoped GitHub credentials per drone. Currently I either use manually created fine-grained PATs (cumbersome, limited UI functionality) or forward my SSH key into containers (dangerous — AI agents in the container get my full GitHub identity).
 
@@ -40,7 +40,7 @@ Docker is the sole source of truth. The devcontainer CLI already sets labels lik
 
 ### CLI Wrapper
 
-A thin CLI on the Hetzner server orchestrates the above:
+A thin CLI on the server orchestrates the above:
 
 ```
 hatchery spawn levinkeller/homepage
@@ -70,7 +70,7 @@ ssh -p 2222 node@levinkeller-homepage.tail.levinkeller.de
 
 ### Solution: GitHub App + Per-Drone Credential Socket
 
-A GitHub App is installed on the relevant repos/org. A credential service on the Hetzner host generates short-lived installation access tokens scoped to specific repositories.
+A GitHub App is installed on the relevant repos/org. A credential service on the host generates short-lived installation access tokens scoped to specific repositories.
 
 **Why a GitHub App**: Installation access tokens support both git operations and the full GitHub API (PRs, issues, CI status, etc.). They expire after 1 hour automatically. They can be scoped to specific repos at creation time.
 

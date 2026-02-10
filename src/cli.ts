@@ -16,7 +16,7 @@ import { msg, status } from "./zerg.ts";
 
 const program = new Command();
 
-program.name("hatchery").description("Manage devcontainer drones on the Hetzner hive");
+program.name("hatchery").description("Manage devcontainer drones on the hive");
 
 program
   .command("spawn")

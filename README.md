@@ -53,7 +53,7 @@ graph LR
         HS[Headscale Server]
     end
 
-    subgraph "Hetzner Server"
+    subgraph "Host Server"
         subgraph "Docker"
             D1[hatchery-org-repo<br/>SSHD :2222<br/>Tailscale]
             D2[hatchery-other-repo<br/>SSHD :2222<br/>Tailscale]
