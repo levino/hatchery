@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
@@ -125,16 +126,28 @@ func writeOverrideConfig(name, repo string, cfg *config.Config) (string, error) 
 
 	socketHostPath := filepath.Join(cfg.SocketDir, name+".sock")
 
+	containerEnv := map[string]string{
+		"TS_AUTHKEY":  cfg.HeadscaleAuthKey,
+		"TS_HOSTNAME": name,
+	}
+
+	// Inherit git identity from host
+	if gitName, err := exec.Command("git", "config", "user.name").Output(); err == nil {
+		containerEnv["GIT_AUTHOR_NAME"] = strings.TrimSpace(string(gitName))
+		containerEnv["GIT_COMMITTER_NAME"] = strings.TrimSpace(string(gitName))
+	}
+	if gitEmail, err := exec.Command("git", "config", "user.email").Output(); err == nil {
+		containerEnv["GIT_AUTHOR_EMAIL"] = strings.TrimSpace(string(gitEmail))
+		containerEnv["GIT_COMMITTER_EMAIL"] = strings.TrimSpace(string(gitEmail))
+	}
+
 	override := map[string]any{
 		"name": name,
 		"features": map[string]any{
 			"ghcr.io/devcontainers/features/sshd:1":      map[string]any{},
 			"ghcr.io/tailscale/codespace/tailscale": map[string]any{},
 		},
-		"containerEnv": map[string]string{
-			"TS_AUTHKEY":  cfg.HeadscaleAuthKey,
-			"TS_HOSTNAME": name,
-		},
+		"containerEnv": containerEnv,
 		"mounts": []string{
 			fmt.Sprintf("source=%s,target=/var/run/github-creds.sock,type=bind", socketHostPath),
 		},
