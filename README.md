@@ -27,12 +27,13 @@ sequenceDiagram
     Hatchery->>GH: Create installation token (JWT + RS256)
     GH-->>Hatchery: Scoped access token
     Hatchery->>Hatchery: Create Unix socket (~/.hatchery/sockets/name.sock)
-    Hatchery->>DC: devcontainer up (detached)
+    Hatchery->>DC: devcontainer up --additional-features (sshd + tailscale)
+    Note over DC: --remote-env injects TS auth key, hostname, login server
     DC->>Docker: Build image + start container
     Hatchery->>Docker: Poll until container is running
     Docker-->>Hatchery: Container running
     Hatchery->>DC: devcontainer run-user-commands
-    Note over DC,Docker: postStartCommand: tailscale up
+    Note over DC,Docker: Tailscale feature postStartCommand: tailscale up
     DC->>HS: Join tailnet
     Hatchery->>Docker: exec: inject SSH keys + credential scripts
     Hatchery->>HS: Wait for DNS resolution
@@ -111,24 +112,7 @@ sequenceDiagram
 
 ## Repo Requirements
 
-Repos that want to work with Hatchery need this in their `devcontainer.json`:
-
-```json
-{
-  "features": {
-    "ghcr.io/devcontainers/features/sshd:1": {},
-    "ghcr.io/tailscale/codespace/tailscale": {}
-  },
-  "containerEnv": {
-    "HATCHERY_TS_AUTH_KEY": "${localEnv:HATCHERY_TS_AUTH_KEY}",
-    "HATCHERY_TS_HOSTNAME": "${localEnv:HATCHERY_TS_HOSTNAME}",
-    "HATCHERY_TS_LOGIN_SERVER": "${localEnv:HATCHERY_TS_LOGIN_SERVER}"
-  },
-  "postStartCommand": "sudo tailscale up --login-server=${HATCHERY_TS_LOGIN_SERVER} --authkey=${HATCHERY_TS_AUTH_KEY} --hostname=${HATCHERY_TS_HOSTNAME}"
-}
-```
-
-Everything else (labels, socket mounts, SSH keys, credential scripts) is handled by hatchery at spawn time.
+Any repo with a `devcontainer.json` works out of the box. Hatchery automatically injects the sshd and Tailscale features at spawn time via `--additional-features`, so repos do not need any hatchery-specific configuration. The same `devcontainer.json` works in GitHub Codespaces or local VS Code without modification.
 
 ## Setup
 

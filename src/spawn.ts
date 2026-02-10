@@ -1,5 +1,5 @@
 import { execFileSync, spawn as spawnChild } from "node:child_process";
-import { mkdirSync, existsSync, readFileSync } from "node:fs";
+import { mkdirSync, existsSync } from "node:fs";
 import { join, resolve, basename } from "node:path";
 import { homedir } from "node:os";
 import { lookup } from "node:dns/promises";
@@ -55,7 +55,7 @@ export async function spawn(docker: Docker, repo: string, config: Config) {
   await devcontainerUp(docker, repoDir, name, repo, config);
 
   // Run lifecycle commands (postCreateCommand, postStartCommand, etc.)
-  runUserCommands(repoDir, name, config);
+  runUserCommands(repoDir, name);
 
   // Set up container: SSH keys + git/gh credentials
   const drone = await findDrone(docker, name);
@@ -111,16 +111,29 @@ async function devcontainerUp(
   const socketHostPath = join(config.socketDir, `${name}.sock`);
   const devcontainerBin = resolve("node_modules/.bin/devcontainer");
 
+  const additionalFeatures = JSON.stringify({
+    "ghcr.io/devcontainers/features/sshd:1": {},
+    "ghcr.io/tailscale/codespace/tailscale": {},
+  });
+
   const args = [
     "up",
     "--workspace-folder",
     workDir,
+    "--additional-features",
+    additionalFeatures,
     "--id-label",
     `${LABEL_MANAGED}=true`,
     "--id-label",
     `${LABEL_DRONE}=${name}`,
     "--id-label",
     `${LABEL_REPO}=${repo}`,
+    "--remote-env",
+    `HATCHERY_TS_AUTH_KEY=${config.headscaleAuthKey}`,
+    "--remote-env",
+    `HATCHERY_TS_HOSTNAME=${name}`,
+    "--remote-env",
+    `HATCHERY_TS_LOGIN_SERVER=https://${config.tailscaleDomain}`,
     ...(existsSync(socketHostPath)
       ? [
           "--mount",
@@ -132,7 +145,6 @@ async function devcontainerUp(
   // devcontainer up hangs after the container starts, so run it detached
   // and poll docker for the container to appear
   const child = spawnChild(devcontainerBin, args, {
-    env: hatcheryEnv(name, config),
     stdio: "inherit",
     detached: true,
   });
@@ -157,7 +169,6 @@ async function devcontainerUp(
 function runUserCommands(
   workDir: string,
   name: string,
-  config: Config,
 ) {
   const devcontainerBin = resolve("node_modules/.bin/devcontainer");
 
@@ -171,16 +182,7 @@ function runUserCommands(
     `${LABEL_DRONE}=${name}`,
   ];
 
-  execFileSync(devcontainerBin, args, { stdio: "inherit", env: hatcheryEnv(name, config) });
-}
-
-function hatcheryEnv(name: string, config: Config) {
-  return {
-    ...process.env,
-    HATCHERY_TS_AUTH_KEY: config.headscaleAuthKey,
-    HATCHERY_TS_HOSTNAME: name,
-    HATCHERY_TS_LOGIN_SERVER: `https://${config.tailscaleDomain}`,
-  };
+  execFileSync(devcontainerBin, args, { stdio: "inherit" });
 }
 
 async function waitForHost(

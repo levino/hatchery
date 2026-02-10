@@ -32,7 +32,7 @@ Repos are cloned into Docker volumes (not bind-mounted from the host) for perfor
 
 ### SSH Access: devcontainer sshd feature
 
-Each repo's `devcontainer.json` includes the standard sshd feature (`ghcr.io/devcontainers/features/sshd:1`), which starts an SSH server on port 2222 inside the container. This is required for VS Code Remote-SSH to work — it needs the full SSH protocol (multiplexed channels, SFTP, port forwarding), which a plain `docker exec` cannot provide.
+Hatchery injects the standard sshd feature (`ghcr.io/devcontainers/features/sshd:1`) at spawn time via `--additional-features`, which starts an SSH server on port 2222 inside the container. This is required for VS Code Remote-SSH to work — it needs the full SSH protocol (multiplexed channels, SFTP, port forwarding), which a plain `docker exec` cannot provide. Repos do not need to declare this feature themselves.
 
 ### State: Docker Labels
 
@@ -118,16 +118,11 @@ AI agents and other tools that call `gh` get a scoped, short-lived token transpa
 
 ## What Each Repo's devcontainer.json Needs
 
-```json
-{
-  "features": {
-    "ghcr.io/devcontainers/features/sshd:1": {},
-    "ghcr.io/tailscale/codespace/tailscale": {}
-  }
-}
-```
+Nothing hatchery-specific. Any repo with a standard `devcontainer.json` works out of the box.
 
-Everything else (credential socket mounting, label assignment, Tailscale auth key injection) is handled by the `hatchery` CLI wrapper at creation time. The repos remain portable — the same `devcontainer.json` works in GitHub Codespaces or local VS Code.
+Hatchery injects the sshd and Tailscale features at spawn time via `devcontainer up --additional-features`, and passes the Tailscale runtime config (auth key, hostname, login server) via `--remote-env` flags. Credential socket mounting, label assignment, and SSH key injection are also handled by the `hatchery` CLI at creation time.
+
+The repos remain portable — the same `devcontainer.json` works in GitHub Codespaces or local VS Code without modification.
 
 ## Components Summary
 
