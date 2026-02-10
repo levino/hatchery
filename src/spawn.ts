@@ -53,11 +53,11 @@ export async function spawn(docker: Docker, repo: string, config: Config) {
 
   // Directory layout for worktree support:
   //   ~/.hatchery/repos/<drone-name>/
-  //   ├── workspaces/          <- mounted as --workspace-folder
+  //   ├── worktrees/           <- mounted as --workspace-folder → /workspaces/worktrees/
   //   │   ├── main/            <- git clone (initial working tree)
   //   │   ├── feature-x/       <- git worktree
   //   │   └── bugfix/          <- git worktree
-  const workspaceDir = join(HATCHERY_DIR, name, "workspaces");
+  const workspaceDir = join(HATCHERY_DIR, name, "worktrees");
   const repoDir = join(workspaceDir, "main");
   if (!existsSync(repoDir)) {
     console.log(msg.cloning);
@@ -103,7 +103,7 @@ export async function spawn(docker: Docker, repo: string, config: Config) {
   // Run lifecycle commands (postCreateCommand, postStartCommand, etc.)
   runUserCommands(workspaceDir, devcontainerConfig, name, remoteEnvs);
 
-  const vscodeUri = `vscode://vscode-remote/ssh-remote+${name}/workspaces/${name}`;
+  const vscodeUri = `vscode://vscode-remote/ssh-remote+${name}/workspaces/worktrees/main`;
   const link = `\x1b]8;;${vscodeUri}\x1b\\${vscodeUri}\x1b]8;;\x1b\\`;
   console.log(msg.spawnComplete);
   console.log(`  ssh vscode@${name}`);
