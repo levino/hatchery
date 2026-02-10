@@ -18,6 +18,27 @@ import { msg } from "./zerg.ts";
 
 const HATCHERY_DIR = join(homedir(), ".hatchery", "repos");
 
+/** Known locations for devcontainer.json, checked in order. */
+const DEVCONTAINER_CONFIG_PATHS = [
+  ".devcontainer/devcontainer.json",
+  ".devcontainer.json",
+  "devcontainer.json",
+];
+
+/**
+ * Find the devcontainer.json config file inside a repo directory.
+ * Returns the absolute path or null if not found.
+ */
+function findDevcontainerConfig(repoDir: string): string | null {
+  for (const relPath of DEVCONTAINER_CONFIG_PATHS) {
+    const fullPath = join(repoDir, relPath);
+    if (existsSync(fullPath)) {
+      return fullPath;
+    }
+  }
+  return null;
+}
+
 export async function spawn(docker: Docker, repo: string, config: Config) {
   // Detect local path vs GitHub org/repo
   const localPath = resolve(repo);
@@ -31,11 +52,15 @@ export async function spawn(docker: Docker, repo: string, config: Config) {
 
   console.log(msg.spawnStarting);
 
-  // Clone repo to persistent directory
-  const repoDir = join(HATCHERY_DIR, name);
+  // Directory layout for worktree support:
+  //   ~/.hatchery/repos/<drone-name>/          <- workspace dir (mounted into container)
+  //   ~/.hatchery/repos/<drone-name>/repo/     <- actual git clone
+  //   ~/.hatchery/repos/<drone-name>/branch/   <- git worktrees (created inside container)
+  const workspaceDir = join(HATCHERY_DIR, name);
+  const repoDir = join(workspaceDir, "repo");
   if (!existsSync(repoDir)) {
     console.log(msg.cloning);
-    mkdirSync(HATCHERY_DIR, { recursive: true });
+    mkdirSync(workspaceDir, { recursive: true });
     const cloneSource = isLocal ? localPath : `https://github.com/${repo}.git`;
     execFileSync("git", ["clone", cloneSource, repoDir], { stdio: "inherit" });
   }
@@ -51,11 +76,19 @@ export async function spawn(docker: Docker, repo: string, config: Config) {
     await new Promise((r) => setTimeout(r, 500));
   }
 
+  // Locate devcontainer.json inside the clone
+  const devcontainerConfig = findDevcontainerConfig(repoDir);
+  if (!devcontainerConfig) {
+    throw new Error(
+      `No devcontainer.json found in ${repoDir} — checked ${DEVCONTAINER_CONFIG_PATHS.join(", ")}`,
+    );
+  }
+
   // devcontainer up (async — returns when container is running)
-  await devcontainerUp(docker, repoDir, name, repo, config);
+  await devcontainerUp(docker, workspaceDir, devcontainerConfig, name, repo, config);
 
   // Run lifecycle commands (postCreateCommand, postStartCommand, etc.)
-  runUserCommands(repoDir, name, config);
+  runUserCommands(workspaceDir, devcontainerConfig, name, config);
 
   // Set up container: SSH keys + git/gh credentials
   const drone = await findDrone(docker, name);
@@ -103,7 +136,8 @@ export async function spawn(docker: Docker, repo: string, config: Config) {
 
 async function devcontainerUp(
   docker: Docker,
-  workDir: string,
+  workspaceDir: string,
+  configPath: string,
   name: string,
   repo: string,
   config: Config,
@@ -114,7 +148,11 @@ async function devcontainerUp(
   const args = [
     "up",
     "--workspace-folder",
-    workDir,
+    workspaceDir,
+    "--config",
+    configPath,
+    "--mount-workspace-git-root",
+    "false",
     "--id-label",
     `${LABEL_MANAGED}=true`,
     "--id-label",
@@ -155,7 +193,8 @@ async function devcontainerUp(
 }
 
 function runUserCommands(
-  workDir: string,
+  workspaceDir: string,
+  configPath: string,
   name: string,
   config: Config,
 ) {
@@ -164,7 +203,9 @@ function runUserCommands(
   const args = [
     "run-user-commands",
     "--workspace-folder",
-    workDir,
+    workspaceDir,
+    "--config",
+    configPath,
     "--id-label",
     `${LABEL_MANAGED}=true`,
     "--id-label",
