@@ -1,2 +1,5 @@
 .env
-bin/
+*.pem
+config.json
+node_modules/
+dist/

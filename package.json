@@ -1,0 +1,28 @@
+{
+  "name": "hatchery",
+  "version": "0.1.0",
+  "description": "Self-hosted remote dev environment manager",
+  "type": "module",
+  "bin": {
+    "hatchery": "./src/cli.ts",
+    "hatchery-creds": "./src/creds-service.ts"
+  },
+  "scripts": {
+    "build": "tsc",
+    "hatchery": "node --experimental-strip-types src/cli.ts",
+    "hatchery-creds": "node --experimental-strip-types src/creds-service.ts"
+  },
+  "dependencies": {
+    "@devcontainers/cli": "^0.75.0",
+    "commander": "^13.1.0",
+    "dockerode": "^4.0.4",
+    "dotenv": "^16.4.7",
+    "jsonwebtoken": "^9.0.2"
+  },
+  "devDependencies": {
+    "@types/dockerode": "^3.3.34",
+    "@types/jsonwebtoken": "^9.0.9",
+    "@types/node": "^22.13.1",
+    "typescript": "^5.7.3"
+  }
+}
