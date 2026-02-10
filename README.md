@@ -8,6 +8,7 @@ Self-hosted remote dev environment manager. Runs devcontainers ("drones") on a s
 - Each drone gets its own short-lived GitHub token scoped to specific repos (no SSH key forwarding, no manual PATs)
 - Works with VS Code, JetBrains, Neovim, terminal SSH — anything that speaks SSH
 - Repos stay portable — same `devcontainer.json` works in Codespaces or locally
+- Git worktree support — create multiple worktrees inside a drone, all persisted on the host
 
 ## How It Works
 
@@ -23,7 +24,7 @@ sequenceDiagram
     participant HS as Headscale
 
     User->>Hatchery: hatchery spawn org/repo
-    Hatchery->>Hatchery: git clone repo to ~/.hatchery/repos/
+    Hatchery->>Hatchery: git clone repo to ~/.hatchery/repos/name/repo/
     Hatchery->>GH: Create installation token (JWT + RS256)
     GH-->>Hatchery: Scoped access token
     Hatchery->>Hatchery: Create Unix socket (~/.hatchery/sockets/name.sock)
@@ -97,6 +98,26 @@ sequenceDiagram
     Socket-->>Script: token string
     Script-->>Tool: credentials / GH_TOKEN
 ```
+
+### Git Worktree Support
+
+Hatchery mounts the parent directory of the clone into the container, enabling `git worktree` usage where all worktrees are persisted on the host.
+
+```
+~/.hatchery/repos/<drone-name>/
+├── repo/              # actual clone (main working tree, has .git/)
+├── feature-branch/    # git worktree (created inside container)
+└── bugfix/            # git worktree
+```
+
+Inside a drone, create worktrees relative to the main clone:
+
+```bash
+cd /workspaces/<drone-name>/repo
+git worktree add ../feature-branch feature-branch
+```
+
+The worktree lives alongside the main clone on the host filesystem, surviving container restarts.
 
 ## CLI Commands
 
