@@ -41,6 +41,8 @@ if ls "$HOST_KEY_DIR"/ssh_host_* >/dev/null 2>&1; then
   sudo cp "$HOST_KEY_DIR"/ssh_host_* /etc/ssh/
   sudo chmod 600 /etc/ssh/ssh_host_*_key
   sudo chmod 644 /etc/ssh/ssh_host_*_key.pub
+  # Restart sshd so it picks up the restored keys (it already started via entrypoint)
+  sudo pkill -HUP sshd || true
 else
   sudo cp /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub "$HOST_KEY_DIR/"
 fi
