@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "src/hatchery/**"
+      - "features/hatchery/**"
 
   workflow_dispatch:
 
@@ -21,6 +21,6 @@ jobs:
         uses: devcontainers/action@v1
         with:
           publish-features: "true"
-          base-path-to-features: "./src"
+          base-path-to-features: "./features"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
