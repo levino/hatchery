@@ -14,7 +14,7 @@ export interface Drone {
 }
 
 export function droneName(repo: string): string {
-  return repo.replace("/", "-");
+  return `hatchery-${repo.replace("/", "-")}`;
 }
 
 export function hostname(name: string, domain: string): string {

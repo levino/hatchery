@@ -1,10 +1,12 @@
 import { readFileSync, existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { resolve, join } from "node:path";
+import { homedir } from "node:os";
 import dotenv from "dotenv";
 
 export interface Config {
   githubClientId: string;
   githubAppPrivateKey: string;
+  githubUser: string;
   installations: Record<string, string>; // org -> installation ID
   headscaleAuthKey: string;
   tailscaleDomain: string;
@@ -34,11 +36,12 @@ export function loadConfig(): Config {
   return {
     githubClientId: process.env.HATCHERY_GITHUB_CLIENT_ID ?? "",
     githubAppPrivateKey: privateKey,
+    githubUser: process.env.HATCHERY_GITHUB_USER ?? "",
     installations,
     headscaleAuthKey: process.env.HATCHERY_HEADSCALE_AUTH_KEY ?? "",
     tailscaleDomain:
       process.env.HATCHERY_TAILSCALE_DOMAIN ?? "tail.levinkeller.de",
-    socketDir: process.env.HATCHERY_SOCKET_DIR ?? "/var/run/hatchery",
+    socketDir: process.env.HATCHERY_SOCKET_DIR ?? join(homedir(), ".hatchery", "sockets"),
   };
 }
 
