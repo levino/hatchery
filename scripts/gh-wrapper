@@ -1,0 +1,5 @@
+#!/bin/sh
+# Wrapper for gh CLI that injects a scoped token from the hatchery credential socket.
+# Install as /usr/local/bin/gh (rename real gh to /usr/bin/gh).
+export GH_TOKEN=$(curl -s --unix-socket /var/run/github-creds.sock http://localhost/token)
+exec /usr/bin/gh "$@"
