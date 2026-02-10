@@ -13,14 +13,22 @@ export interface Config {
   socketDir: string;
 }
 
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`${name} not set — add it to .env`);
+  }
+  return value;
+}
+
 export function loadConfig(): Config {
   dotenv.config();
   if (existsSync("/etc/hatchery.env")) {
     dotenv.config({ path: "/etc/hatchery.env" });
   }
 
-  let privateKey = process.env.HATCHERY_GITHUB_APP_KEY ?? "";
-  if (privateKey && !privateKey.startsWith("-----")) {
+  let privateKey = requireEnv("HATCHERY_GITHUB_APP_KEY");
+  if (!privateKey.startsWith("-----")) {
     const keyPath = resolve(privateKey);
     if (existsSync(keyPath)) {
       privateKey = readFileSync(keyPath, "utf-8");
@@ -32,16 +40,18 @@ export function loadConfig(): Config {
     const raw = JSON.parse(readFileSync("config.json", "utf-8"));
     Object.assign(installations, raw.installations ?? {});
   }
+  if (Object.keys(installations).length === 0) {
+    throw new Error("No installations configured — add them to config.json");
+  }
 
   return {
-    githubClientId: process.env.HATCHERY_GITHUB_CLIENT_ID ?? "",
+    githubClientId: requireEnv("HATCHERY_GITHUB_CLIENT_ID"),
     githubAppPrivateKey: privateKey,
-    githubUser: process.env.HATCHERY_GITHUB_USER ?? "",
+    githubUser: requireEnv("HATCHERY_GITHUB_USER"),
     installations,
-    headscaleAuthKey: process.env.HATCHERY_HEADSCALE_AUTH_KEY ?? "",
-    tailscaleDomain:
-      process.env.HATCHERY_TAILSCALE_DOMAIN ?? "tail.levinkeller.de",
-    socketDir: process.env.HATCHERY_SOCKET_DIR ?? join(homedir(), ".hatchery", "sockets"),
+    headscaleAuthKey: requireEnv("HATCHERY_HEADSCALE_AUTH_KEY"),
+    tailscaleDomain: requireEnv("HATCHERY_TAILSCALE_DOMAIN"),
+    socketDir: process.env.HATCHERY_SOCKET_DIR || join(homedir(), ".hatchery", "sockets"),
   };
 }
 
@@ -59,16 +69,3 @@ export function installationId(
   return id;
 }
 
-export function requireCredentials(config: Config): void {
-  if (!config.githubClientId) {
-    throw new Error("HATCHERY_GITHUB_CLIENT_ID not set");
-  }
-  if (!config.githubAppPrivateKey) {
-    throw new Error("HATCHERY_GITHUB_APP_KEY not set");
-  }
-  if (Object.keys(config.installations).length === 0) {
-    throw new Error(
-      "No installations configured — add them to config.json",
-    );
-  }
-}

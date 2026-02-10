@@ -1,5 +1,7 @@
 #!/usr/bin/env -S node --experimental-strip-types
 
+import { existsSync } from "node:fs";
+import { resolve, basename } from "node:path";
 import { Command } from "commander";
 import { loadConfig } from "./config.ts";
 import {
@@ -13,6 +15,15 @@ import {
 } from "./docker.ts";
 import { spawn } from "./spawn.ts";
 import { msg, status } from "./zerg.ts";
+
+/** Resolve a CLI argument to the drone name, handling both local paths and org/repo. */
+function resolveDroneName(repo: string): string {
+  const localPath = resolve(repo);
+  if (existsSync(localPath)) {
+    return `hatchery-${basename(localPath)}`;
+  }
+  return droneName(repo);
+}
 
 const program = new Command();
 
@@ -49,7 +60,7 @@ program
   .description("Show status of a specific drone")
   .action(async (repo: string) => {
     const docker = createClient();
-    const name = droneName(repo);
+    const name = resolveDroneName(repo);
     const d = await findDrone(docker, name);
     if (!d) {
       console.error(msg.droneNotFound);
@@ -66,7 +77,7 @@ program
   .description("Stop a drone (burrow underground)")
   .action(async (repo: string) => {
     const docker = createClient();
-    const name = droneName(repo);
+    const name = resolveDroneName(repo);
     const d = await findDrone(docker, name);
     if (!d) {
       console.error(msg.droneNotFound);
@@ -82,7 +93,7 @@ program
   .description("Start a stopped drone (emerge from the ground)")
   .action(async (repo: string) => {
     const docker = createClient();
-    const name = droneName(repo);
+    const name = resolveDroneName(repo);
     const d = await findDrone(docker, name);
     if (!d) {
       console.error(msg.droneNotFound);
@@ -98,7 +109,7 @@ program
   .description("Remove a drone permanently")
   .action(async (repo: string) => {
     const docker = createClient();
-    const name = droneName(repo);
+    const name = resolveDroneName(repo);
     const d = await findDrone(docker, name);
     if (!d) {
       console.error(msg.droneNotFound);

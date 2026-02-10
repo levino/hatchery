@@ -1,0 +1,14 @@
+{
+  "id": "hatchery",
+  "version": "1.0.0",
+  "name": "Hatchery Drone Setup",
+  "description": "SSH keys, Tailscale join, git/gh credential helpers",
+  "postStartCommand": "/usr/local/bin/hatchery-post-start",
+  "mounts": [
+    {
+      "source": "ssh-host-keys-${devcontainerId}",
+      "target": "/var/lib/hatchery/host-keys",
+      "type": "volume"
+    }
+  ]
+}

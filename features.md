@@ -120,7 +120,15 @@ AI agents and other tools that call `gh` get a scoped, short-lived token transpa
 
 Nothing hatchery-specific. Any repo with a standard `devcontainer.json` works out of the box.
 
-Hatchery injects the sshd and Tailscale features at spawn time via `devcontainer up --additional-features`, and passes the Tailscale runtime config (auth key, hostname, login server) via `--remote-env` flags. Credential socket mounting, label assignment, and SSH key injection are also handled by the `hatchery` CLI at creation time.
+Hatchery injects three features at spawn time via `devcontainer up --additional-features`:
+
+1. **sshd** (`ghcr.io/devcontainers/features/sshd:1`) — SSH server on port 2222
+2. **Tailscale** (`ghcr.io/tailscale/codespace/tailscale`) — Tailscale daemon
+3. **hatchery** (local feature in `features/hatchery/`) — all drone-specific setup:
+   - **Build time** (`install.sh`): writes git credential helper, gh CLI wrapper, configures `git config --system`
+   - **Post-start** (`postStartCommand`): fetches SSH keys from GitHub, joins Tailscale/Headscale network
+
+Runtime config is passed via `--remote-env` flags (`HATCHERY_GITHUB_USER`, `HATCHERY_TS_AUTH_KEY`, `HATCHERY_TS_HOSTNAME`, `HATCHERY_TS_LOGIN_SERVER`). Credential socket mounting and label assignment are handled by the CLI.
 
 The repos remain portable — the same `devcontainer.json` works in GitHub Codespaces or local VS Code without modification.
 

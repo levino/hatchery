@@ -2,7 +2,6 @@ import { execFileSync, spawn as spawnChild } from "node:child_process";
 import { mkdirSync, existsSync } from "node:fs";
 import { join, resolve, basename } from "node:path";
 import { homedir } from "node:os";
-import { lookup } from "node:dns/promises";
 import Docker from "dockerode";
 import {
   findDrone,
@@ -53,11 +52,13 @@ export async function spawn(docker: Docker, repo: string, config: Config) {
   console.log(msg.spawnStarting);
 
   // Directory layout for worktree support:
-  //   ~/.hatchery/repos/<drone-name>/          <- workspace dir (mounted into container)
-  //   ~/.hatchery/repos/<drone-name>/repo/     <- actual git clone
-  //   ~/.hatchery/repos/<drone-name>/branch/   <- git worktrees (created inside container)
-  const workspaceDir = join(HATCHERY_DIR, name);
-  const repoDir = join(workspaceDir, "repo");
+  //   ~/.hatchery/repos/<drone-name>/
+  //   ├── workspaces/          <- mounted as --workspace-folder
+  //   │   ├── main/            <- git clone (initial working tree)
+  //   │   ├── feature-x/       <- git worktree
+  //   │   └── bugfix/          <- git worktree
+  const workspaceDir = join(HATCHERY_DIR, name, "workspaces");
+  const repoDir = join(workspaceDir, "main");
   if (!existsSync(repoDir)) {
     console.log(msg.cloning);
     mkdirSync(workspaceDir, { recursive: true });
@@ -66,12 +67,11 @@ export async function spawn(docker: Docker, repo: string, config: Config) {
   }
 
   // Create credential socket before container start so it can be mounted
-  let socketManager: SocketManager | null = null;
   if (config.githubAppPrivateKey && !isLocal) {
     mkdirSync(config.socketDir, { recursive: true });
     const tp = new TokenProvider(config);
-    socketManager = new SocketManager(config.socketDir, tp);
-    socketManager.createSocket(name, [repo]);
+    const sm = new SocketManager(config.socketDir, tp);
+    sm.createSocket(name, [repo]);
     // Wait briefly for socket to be ready
     await new Promise((r) => setTimeout(r, 500));
   }
@@ -84,48 +84,24 @@ export async function spawn(docker: Docker, repo: string, config: Config) {
     );
   }
 
+  // Remote env vars for hatchery feature postStartCommand
+  const remoteEnvs: [string, string][] = [];
+  if (config.githubUser) {
+    remoteEnvs.push(["HATCHERY_GITHUB_USER", config.githubUser]);
+  }
+  if (config.headscaleAuthKey) {
+    remoteEnvs.push(["HATCHERY_TS_AUTH_KEY", config.headscaleAuthKey]);
+  }
+  if (config.tailscaleDomain) {
+    remoteEnvs.push(["HATCHERY_TS_LOGIN_SERVER", `https://${config.tailscaleDomain}`]);
+  }
+  remoteEnvs.push(["HATCHERY_TS_HOSTNAME", name]);
+
   // devcontainer up (async — returns when container is running)
-  await devcontainerUp(docker, workspaceDir, devcontainerConfig, name, repo, config);
+  await devcontainerUp(docker, workspaceDir, devcontainerConfig, name, repo, config, remoteEnvs);
 
   // Run lifecycle commands (postCreateCommand, postStartCommand, etc.)
-  runUserCommands(workspaceDir, devcontainerConfig, name);
-
-  // Set up container: SSH keys + git/gh credentials
-  const drone = await findDrone(docker, name);
-  if (drone) {
-    const container = docker.getContainer(drone.id);
-
-    // Inject SSH keys from GitHub
-    if (config.githubUser) {
-      const sshSetup = await container.exec({
-        Cmd: ["sh", "-c", `USER_HOME=$(getent passwd 1000 | cut -d: -f6) && mkdir -p $USER_HOME/.ssh && chmod 700 $USER_HOME/.ssh && curl -fsSL https://github.com/${config.githubUser}.keys >> $USER_HOME/.ssh/authorized_keys && chmod 600 $USER_HOME/.ssh/authorized_keys && chown -R 1000:1000 $USER_HOME/.ssh`],
-      });
-      await sshSetup.start({});
-    }
-
-    // Set up git credential helper and gh wrapper if socket is mounted
-    if (socketManager) {
-      const credsSetup = await container.exec({
-        Cmd: ["sh", "-c", [
-          // Git credential helper
-          `printf '#!/bin/sh\\ncase "$1" in get) T=$(curl -sf --unix-socket /var/run/github-creds.sock http://localhost/token); [ -z "$T" ] && exit 1; echo "protocol=https"; echo "host=github.com"; echo "username=x-access-token"; echo "password=$T";; esac\\n' > /usr/local/bin/git-credential-hatchery`,
-          `chmod +x /usr/local/bin/git-credential-hatchery`,
-          `git config --system credential.helper /usr/local/bin/git-credential-hatchery`,
-          // gh wrapper: copy real gh, replace with wrapper
-          `which gh >/dev/null 2>&1 && cp $(which gh) /usr/bin/gh-real && printf '#!/bin/sh\\nexport GH_TOKEN=$(curl -s --unix-socket /var/run/github-creds.sock http://localhost/token)\\nexec /usr/bin/gh-real "$@"\\n' > /usr/local/bin/gh && chmod +x /usr/local/bin/gh || true`,
-        ].join(" && ")],
-      });
-      await credsSetup.start({});
-    }
-  }
-
-  // Wait for Tailscale
-  console.log(msg.waitingTailscale);
-  try {
-    await waitForHost(name, 120_000);
-  } catch {
-    console.log(`Warning: Tailscale hostname ${name} not yet resolvable`);
-  }
+  runUserCommands(workspaceDir, devcontainerConfig, name, remoteEnvs);
 
   const vscodeUri = `vscode://vscode-remote/ssh-remote+${name}/workspaces/${name}`;
   const link = `\x1b]8;;${vscodeUri}\x1b\\${vscodeUri}\x1b]8;;\x1b\\`;
@@ -141,6 +117,7 @@ async function devcontainerUp(
   name: string,
   repo: string,
   config: Config,
+  remoteEnvs: [string, string][],
 ): Promise<void> {
   const socketHostPath = join(config.socketDir, `${name}.sock`);
   const devcontainerBin = resolve("node_modules/.bin/devcontainer");
@@ -148,6 +125,7 @@ async function devcontainerUp(
   const additionalFeatures = JSON.stringify({
     "ghcr.io/devcontainers/features/sshd:1": {},
     "ghcr.io/tailscale/codespace/tailscale": {},
+    "ghcr.io/levino/hatchery/hatchery:1": {},
   });
 
   const args = [
@@ -160,18 +138,13 @@ async function devcontainerUp(
     "false",
     "--additional-features",
     additionalFeatures,
+    ...remoteEnvs.flatMap(([k, v]) => ["--remote-env", `${k}=${v}`]),
     "--id-label",
     `${LABEL_MANAGED}=true`,
     "--id-label",
     `${LABEL_DRONE}=${name}`,
     "--id-label",
     `${LABEL_REPO}=${repo}`,
-    "--remote-env",
-    `HATCHERY_TS_AUTH_KEY=${config.headscaleAuthKey}`,
-    "--remote-env",
-    `HATCHERY_TS_HOSTNAME=${name}`,
-    "--remote-env",
-    `HATCHERY_TS_LOGIN_SERVER=https://${config.tailscaleDomain}`,
     ...(existsSync(socketHostPath)
       ? [
           "--mount",
@@ -208,6 +181,7 @@ function runUserCommands(
   workspaceDir: string,
   configPath: string,
   name: string,
+  remoteEnvs: [string, string][],
 ) {
   const devcontainerBin = resolve("node_modules/.bin/devcontainer");
 
@@ -217,6 +191,7 @@ function runUserCommands(
     workspaceDir,
     "--config",
     configPath,
+    ...remoteEnvs.flatMap(([k, v]) => ["--remote-env", `${k}=${v}`]),
     "--id-label",
     `${LABEL_MANAGED}=true`,
     "--id-label",
@@ -226,18 +201,3 @@ function runUserCommands(
   execFileSync(devcontainerBin, args, { stdio: "inherit" });
 }
 
-async function waitForHost(
-  host: string,
-  timeoutMs: number,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      await lookup(host);
-      return;
-    } catch {
-      await new Promise((r) => setTimeout(r, 2000));
-    }
-  }
-  throw new Error(`Timeout waiting for ${host} to resolve`);
-}

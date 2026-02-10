@@ -24,19 +24,19 @@ sequenceDiagram
     participant HS as Headscale
 
     User->>Hatchery: hatchery spawn org/repo
-    Hatchery->>Hatchery: git clone repo to ~/.hatchery/repos/name/repo/
+    Hatchery->>Hatchery: git clone repo to ~/.hatchery/repos/name/workspaces/main/
     Hatchery->>GH: Create installation token (JWT + RS256)
     GH-->>Hatchery: Scoped access token
     Hatchery->>Hatchery: Create Unix socket (~/.hatchery/sockets/name.sock)
-    Hatchery->>DC: devcontainer up --additional-features (sshd + tailscale)
-    Note over DC: --remote-env injects TS auth key, hostname, login server
+    Hatchery->>DC: devcontainer up --additional-features (sshd + tailscale + hatchery)
+    Note over DC: --remote-env injects TS auth key, hostname, GitHub user
     DC->>Docker: Build image + start container
+    Note over DC,Docker: hatchery feature install.sh: write credential helpers
     Hatchery->>Docker: Poll until container is running
     Docker-->>Hatchery: Container running
     Hatchery->>DC: devcontainer run-user-commands
-    Note over DC,Docker: Tailscale feature postStartCommand: tailscale up
+    Note over DC,Docker: hatchery feature postStartCommand: SSH keys + tailscale up
     DC->>HS: Join tailnet
-    Hatchery->>Docker: exec: inject SSH keys + credential scripts
     Hatchery->>HS: Wait for DNS resolution
     Hatchery-->>User: ssh vscode@hatchery-org-repo
 ```
@@ -101,19 +101,20 @@ sequenceDiagram
 
 ### Git Worktree Support
 
-Hatchery mounts the parent directory of the clone into the container, enabling `git worktree` usage where all worktrees are persisted on the host.
+Hatchery mounts the `workspaces/` directory into the container, enabling `git worktree` usage where all worktrees are persisted on the host.
 
 ```
 ~/.hatchery/repos/<drone-name>/
-├── repo/              # actual clone (main working tree, has .git/)
-├── feature-branch/    # git worktree (created inside container)
-└── bugfix/            # git worktree
+└── workspaces/          # mounted as --workspace-folder
+    ├── main/            # git clone (initial working tree, has .git/)
+    ├── feature-branch/  # git worktree (created inside container)
+    └── bugfix/          # git worktree
 ```
 
 Inside a drone, create worktrees relative to the main clone:
 
 ```bash
-cd /workspaces/<drone-name>/repo
+cd /workspaces/main
 git worktree add ../feature-branch feature-branch
 ```
 
@@ -133,7 +134,7 @@ The worktree lives alongside the main clone on the host filesystem, surviving co
 
 ## Repo Requirements
 
-Any repo with a `devcontainer.json` works out of the box. Hatchery automatically injects the sshd and Tailscale features at spawn time via `--additional-features`, so repos do not need any hatchery-specific configuration. The same `devcontainer.json` works in GitHub Codespaces or local VS Code without modification.
+Any repo with a `devcontainer.json` works out of the box. Hatchery automatically injects sshd, Tailscale, and a custom hatchery feature at spawn time via `--additional-features`. The hatchery feature installs credential helpers at build time and runs SSH key injection + Tailscale join via its `postStartCommand`. Repos do not need any hatchery-specific configuration. The same `devcontainer.json` works in GitHub Codespaces or local VS Code without modification.
 
 ## Setup
 

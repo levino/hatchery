@@ -2,14 +2,13 @@
 
 import { mkdirSync } from "node:fs";
 import Docker from "dockerode";
-import { loadConfig, requireCredentials } from "./config.ts";
+import { loadConfig } from "./config.ts";
 import { LABEL_MANAGED, LABEL_DRONE, LABEL_REPO, listDrones } from "./docker.ts";
 import { TokenProvider } from "./creds/token.ts";
 import { SocketManager } from "./creds/server.ts";
 import { msg } from "./zerg.ts";
 
 const config = loadConfig();
-requireCredentials(config);
 
 mkdirSync(config.socketDir, { recursive: true });
 

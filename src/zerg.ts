@@ -12,7 +12,6 @@ export const msg = {
   tooManyDrones: "Spawn more overlords. Insufficient vespene gas.",
   highMemory: "Nuclear launch detected.",
   cloning: "Assimilating genetic material...",
-  waitingTailscale: "Awaiting neural link...",
   dockerError: "Creep tumor malfunction.",
   socketCreated: "Extractor online.",
   socketRemoved: "Extractor offline.",
