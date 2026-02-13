@@ -28,6 +28,7 @@ export const msg = {
   spawnTimeout:
     "Container did not start within 2 minutes. Check Docker logs for details.\n  Drone lost in the Nydus Network — spawning sequence timed out.",
   updating: "Absorbing latest mutations...",
+  updateFailed: "Pull failed — spawning with existing genetic material. Adapt or perish.",
   noEvolutionPlan:
     "No devcontainer.json found in the repo. Add one so the drone knows how to build.\n  The spawning pool rejects unsequenced DNA — evolution requires a build plan.",
 };

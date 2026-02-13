@@ -1,0 +1,18 @@
+services:
+  creds:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    secrets:
+      - github-app-key
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${HOME}/.hatchery/sockets:/sockets
+      - ./config.json:/app/config.json:ro
+    environment:
+      HATCHERY_SOCKET_DIR: /sockets
+      HATCHERY_GITHUB_APP_KEY: /run/secrets/github-app-key
+
+secrets:
+  github-app-key:
+    file: ./${HATCHERY_GITHUB_APP_KEY}

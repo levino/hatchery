@@ -6,7 +6,7 @@ cat > /usr/local/bin/git-credential-hatchery <<'CRED'
 #!/bin/sh
 case "$1" in
   get)
-    T=$(curl -sf --unix-socket /var/run/github-creds.sock http://localhost/token)
+    T=$(curl -sf --unix-socket /var/run/hatchery-sockets/creds.sock http://localhost/token)
     [ -z "$T" ] && exit 1
     echo "protocol=https"
     echo "host=github.com"
@@ -25,7 +25,7 @@ if command -v gh >/dev/null 2>&1; then
   cp "$GH_REAL" /usr/bin/gh-real
   cat > /usr/local/bin/gh <<'GH'
 #!/bin/sh
-export GH_TOKEN=$(curl -s --unix-socket /var/run/github-creds.sock http://localhost/token)
+export GH_TOKEN=$(curl -s --unix-socket /var/run/hatchery-sockets/creds.sock http://localhost/token)
 exec /usr/bin/gh-real "$@"
 GH
   chmod +x /usr/local/bin/gh

@@ -11,8 +11,6 @@ import {
   LABEL_REPO,
 } from "./docker.ts";
 import type { Config } from "./config.ts";
-import { TokenProvider } from "./creds/token.ts";
-import { SocketManager } from "./creds/server.ts";
 import { msg, HatcheryError } from "./zerg.ts";
 
 const HATCHERY_DIR = join(homedir(), ".hatchery", "repos");
@@ -64,6 +62,10 @@ export async function spawn(docker: Docker, repo: string, config: Config) {
     throw new HatcheryError(msg.droneExists);
   }
 
+  // Ensure per-drone sockets dir exists for bind mount
+  const droneSocketDir = join(config.socketDir, name);
+  mkdirSync(droneSocketDir, { recursive: true });
+
   console.log(msg.spawnStarting);
 
   // Directory layout for worktree support:
@@ -81,17 +83,11 @@ export async function spawn(docker: Docker, repo: string, config: Config) {
     execFileSync("git", ["clone", cloneSource, repoDir], { stdio: "inherit" });
   } else {
     console.log(msg.updating);
-    execFileSync("git", ["pull", "--ff-only"], { cwd: repoDir, stdio: "inherit" });
-  }
-
-  // Create credential socket before container start so it can be mounted
-  if (config.githubAppPrivateKey && !isLocal) {
-    mkdirSync(config.socketDir, { recursive: true });
-    const tp = new TokenProvider(config);
-    const sm = new SocketManager(config.socketDir, tp);
-    sm.createSocket(name, [repo]);
-    // Wait briefly for socket to be ready
-    await new Promise((r) => setTimeout(r, 500));
+    try {
+      execFileSync("git", ["pull", "--ff-only"], { cwd: repoDir, stdio: "inherit" });
+    } catch {
+      console.log(msg.updateFailed);
+    }
   }
 
   // Locate devcontainer.json inside the clone
@@ -136,7 +132,6 @@ async function devcontainerUp(
   config: Config,
   remoteEnvs: [string, string][],
 ): Promise<void> {
-  const socketHostPath = join(config.socketDir, `${name}.sock`);
   const devcontainerBin = resolve("node_modules/.bin/devcontainer");
 
   const additionalFeatures = JSON.stringify({
@@ -162,12 +157,8 @@ async function devcontainerUp(
     `${LABEL_DRONE}=${name}`,
     "--id-label",
     `${LABEL_REPO}=${repo}`,
-    ...(existsSync(socketHostPath)
-      ? [
-          "--mount",
-          `type=bind,source=${socketHostPath},target=/var/run/github-creds.sock`,
-        ]
-      : []),
+    "--mount",
+    `type=bind,source=${join(config.socketDir, name)},target=/var/run/hatchery-sockets`,
     ...(config.dotfilesRepo
       ? ["--dotfiles-repository", `https://github.com/${config.dotfilesRepo}`]
       : []),

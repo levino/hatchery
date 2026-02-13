@@ -1,5 +1,5 @@
 import { createServer, type Server } from "node:http";
-import { unlinkSync, chmodSync } from "node:fs";
+import { unlinkSync, chmodSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { TokenProvider } from "./token.ts";
 import { msg } from "../zerg.ts";
@@ -22,7 +22,9 @@ export class SocketManager {
   createSocket(droneName: string, repos: string[]): void {
     if (this.sockets.has(droneName)) return;
 
-    const socketPath = join(this.socketDir, `${droneName}.sock`);
+    const droneDir = join(this.socketDir, droneName);
+    mkdirSync(droneDir, { recursive: true });
+    const socketPath = join(droneDir, "creds.sock");
 
     // Remove stale socket
     try {
@@ -60,7 +62,7 @@ export class SocketManager {
     entry.server.close();
     this.sockets.delete(droneName);
 
-    const socketPath = join(this.socketDir, `${droneName}.sock`);
+    const socketPath = join(this.socketDir, droneName, "creds.sock");
     try {
       unlinkSync(socketPath);
     } catch {}

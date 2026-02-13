@@ -1,6 +1,6 @@
 {
   "id": "hatchery",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "name": "Hatchery Drone Setup",
   "description": "SSH keys, Tailscale join, git/gh credential helpers",
   "postStartCommand": "/usr/local/bin/hatchery-post-start",
