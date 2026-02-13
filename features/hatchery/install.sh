@@ -17,6 +17,7 @@ esac
 CRED
 chmod +x /usr/local/bin/git-credential-hatchery
 git config --system credential.helper /usr/local/bin/git-credential-hatchery
+git config --system url."https://github.com/".insteadOf "git@github.com:"
 
 # --- gh wrapper ---
 if command -v gh >/dev/null 2>&1; then

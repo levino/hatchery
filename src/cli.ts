@@ -14,7 +14,7 @@ import {
   removeDrone,
 } from "./docker.ts";
 import { spawn } from "./spawn.ts";
-import { msg, status } from "./zerg.ts";
+import { msg, status, HatcheryError } from "./zerg.ts";
 
 /** Resolve a CLI argument to the drone name, handling both local paths and org/repo. */
 function resolveDroneName(repo: string): string {
@@ -119,4 +119,10 @@ program
     console.log(msg.slayComplete);
   });
 
-program.parse();
+program.parseAsync().catch((err) => {
+  if (err instanceof HatcheryError) {
+    console.error(`\n  ${err.message}\n`);
+    process.exit(1);
+  }
+  throw err;
+});

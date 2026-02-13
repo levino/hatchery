@@ -1,5 +1,5 @@
 import { execFileSync, spawn as spawnChild } from "node:child_process";
-import { mkdirSync, existsSync } from "node:fs";
+import { mkdirSync, existsSync, readFileSync } from "node:fs";
 import { join, resolve, basename } from "node:path";
 import { homedir } from "node:os";
 import Docker from "dockerode";
@@ -13,7 +13,7 @@ import {
 import type { Config } from "./config.ts";
 import { TokenProvider } from "./creds/token.ts";
 import { SocketManager } from "./creds/server.ts";
-import { msg } from "./zerg.ts";
+import { msg, HatcheryError } from "./zerg.ts";
 
 const HATCHERY_DIR = join(homedir(), ".hatchery", "repos");
 
@@ -38,6 +38,21 @@ function findDevcontainerConfig(repoDir: string): string | null {
   return null;
 }
 
+/**
+ * Read the remoteUser from a devcontainer.json file.
+ * Falls back to container image default user via Docker inspect.
+ */
+function getRemoteUser(configPath: string, docker: Docker, droneName: string): string {
+  try {
+    const raw = readFileSync(configPath, "utf-8");
+    // Strip JSON-with-comments (line comments only, good enough)
+    const stripped = raw.replace(/^\s*\/\/.*$/gm, "");
+    const parsed = JSON.parse(stripped);
+    if (parsed.remoteUser) return parsed.remoteUser;
+  } catch {}
+  return "root";
+}
+
 export async function spawn(docker: Docker, repo: string, config: Config) {
   // Detect local path vs GitHub org/repo
   const localPath = resolve(repo);
@@ -46,7 +61,7 @@ export async function spawn(docker: Docker, repo: string, config: Config) {
 
   const existing = await findDrone(docker, name);
   if (existing) {
-    throw new Error(msg.droneExists);
+    throw new HatcheryError(msg.droneExists);
   }
 
   console.log(msg.spawnStarting);
@@ -62,8 +77,11 @@ export async function spawn(docker: Docker, repo: string, config: Config) {
   if (!existsSync(repoDir)) {
     console.log(msg.cloning);
     mkdirSync(workspaceDir, { recursive: true });
-    const cloneSource = isLocal ? localPath : `https://github.com/${repo}.git`;
+    const cloneSource = isLocal ? localPath : `git@github.com:${repo}.git`;
     execFileSync("git", ["clone", cloneSource, repoDir], { stdio: "inherit" });
+  } else {
+    console.log(msg.updating);
+    execFileSync("git", ["pull", "--ff-only"], { cwd: repoDir, stdio: "inherit" });
   }
 
   // Create credential socket before container start so it can be mounted
@@ -79,9 +97,7 @@ export async function spawn(docker: Docker, repo: string, config: Config) {
   // Locate devcontainer.json inside the clone
   const devcontainerConfig = findDevcontainerConfig(repoDir);
   if (!devcontainerConfig) {
-    throw new Error(
-      `No devcontainer.json found in ${repoDir} — checked ${DEVCONTAINER_CONFIG_PATHS.join(", ")}`,
-    );
+    throw new HatcheryError(msg.noEvolutionPlan);
   }
 
   // Remote env vars for hatchery feature postStartCommand
@@ -103,10 +119,11 @@ export async function spawn(docker: Docker, repo: string, config: Config) {
   // Run lifecycle commands (postCreateCommand, postStartCommand, etc.)
   runUserCommands(workspaceDir, devcontainerConfig, name, remoteEnvs);
 
+  const user = getRemoteUser(devcontainerConfig, docker, name);
   const vscodeUri = `vscode://vscode-remote/ssh-remote+${name}/workspaces/worktrees/main`;
   const link = `\x1b]8;;${vscodeUri}\x1b\\${vscodeUri}\x1b]8;;\x1b\\`;
   console.log(msg.spawnComplete);
-  console.log(`  ssh vscode@${name}`);
+  console.log(`  ssh ${user}@${name}`);
   console.log(`  ${link}`);
 }
 
@@ -151,6 +168,9 @@ async function devcontainerUp(
           `type=bind,source=${socketHostPath},target=/var/run/github-creds.sock`,
         ]
       : []),
+    ...(config.dotfilesRepo
+      ? ["--dotfiles-repository", `https://github.com/${config.dotfilesRepo}`]
+      : []),
   ];
 
   // devcontainer up hangs after the container starts, so run it detached
@@ -174,7 +194,7 @@ async function devcontainerUp(
   }
 
   try { process.kill(-child.pid!, "SIGTERM"); } catch {}
-  throw new Error("Timeout waiting for container to start");
+  throw new HatcheryError(msg.spawnTimeout);
 }
 
 function runUserCommands(

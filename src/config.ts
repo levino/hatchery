@@ -11,6 +11,7 @@ export interface Config {
   headscaleAuthKey: string;
   tailscaleDomain: string;
   socketDir: string;
+  dotfilesRepo: string;
 }
 
 function requireEnv(name: string): string {
@@ -52,6 +53,7 @@ export function loadConfig(): Config {
     headscaleAuthKey: requireEnv("HATCHERY_HEADSCALE_AUTH_KEY"),
     tailscaleDomain: requireEnv("HATCHERY_TAILSCALE_DOMAIN"),
     socketDir: process.env.HATCHERY_SOCKET_DIR || join(homedir(), ".hatchery", "sockets"),
+    dotfilesRepo: process.env.HATCHERY_DOTFILES_REPO || "",
   };
 }
 
