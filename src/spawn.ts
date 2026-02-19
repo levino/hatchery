@@ -136,6 +136,7 @@ async function devcontainerUp(
   const devcontainerBin = resolve("node_modules/.bin/devcontainer");
 
   const additionalFeatures = JSON.stringify({
+    "ghcr.io/devcontainers/features/github-cli:1": {},
     "ghcr.io/devcontainers/features/sshd:1": {},
     "ghcr.io/tailscale/codespace/tailscale": {},
     "ghcr.io/levino/hatchery/hatchery:1": {},
