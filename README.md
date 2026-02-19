@@ -24,7 +24,7 @@ sequenceDiagram
     participant HS as Headscale
 
     User->>Hatchery: hatchery spawn org/repo
-    Hatchery->>Hatchery: git clone repo to ~/.hatchery/repos/name/workspaces/main/
+    Hatchery->>Hatchery: git clone repo to ~/.hatchery/repos/name/worktrees/main/
     Hatchery->>GH: Create installation token (JWT + RS256)
     GH-->>Hatchery: Scoped access token
     Hatchery->>Hatchery: Create Unix socket (~/.hatchery/sockets/name.sock)
@@ -101,11 +101,11 @@ sequenceDiagram
 
 ### Git Worktree Support
 
-Hatchery mounts the `workspaces/` directory into the container, enabling `git worktree` usage where all worktrees are persisted on the host.
+Hatchery mounts the `worktrees/` directory into the container, enabling `git worktree` usage where all worktrees are persisted on the host.
 
 ```
 ~/.hatchery/repos/<drone-name>/
-└── workspaces/          # mounted as --workspace-folder
+└── worktrees/           # mounted as --workspace-folder
     ├── main/            # git clone (initial working tree, has .git/)
     ├── feature-branch/  # git worktree (created inside container)
     └── bugfix/          # git worktree

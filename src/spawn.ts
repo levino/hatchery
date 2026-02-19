@@ -70,8 +70,8 @@ export async function spawn(docker: Docker, repo: string, config: Config) {
 
   // Directory layout for worktree support:
   //   ~/.hatchery/repos/<drone-name>/
-  //   ├── worktrees/           <- mounted as --workspace-folder → /workspaces/worktrees/
-  //   │   ├── main/            <- git clone (initial working tree)
+  //   ├── worktrees/           <- mounted via --mount → /workspaces/worktrees/
+  //   │   ├── main/            <- git clone, used as --workspace-folder
   //   │   ├── feature-x/       <- git worktree
   //   │   └── bugfix/          <- git worktree
   const workspaceDir = join(HATCHERY_DIR, name, "worktrees");
@@ -110,10 +110,10 @@ export async function spawn(docker: Docker, repo: string, config: Config) {
   remoteEnvs.push(["HATCHERY_TS_HOSTNAME", name]);
 
   // devcontainer up (async — returns when container is running)
-  await devcontainerUp(docker, workspaceDir, devcontainerConfig, name, repo, config, remoteEnvs);
+  await devcontainerUp(docker, repoDir, workspaceDir, devcontainerConfig, name, repo, config, remoteEnvs);
 
   // Run lifecycle commands (postCreateCommand, postStartCommand, etc.)
-  runUserCommands(workspaceDir, devcontainerConfig, name, remoteEnvs);
+  runUserCommands(repoDir, devcontainerConfig, name, remoteEnvs);
 
   const user = getRemoteUser(devcontainerConfig, docker, name);
   const vscodeUri = `vscode://vscode-remote/ssh-remote+${name}/workspaces/worktrees/main`;
@@ -125,7 +125,8 @@ export async function spawn(docker: Docker, repo: string, config: Config) {
 
 async function devcontainerUp(
   docker: Docker,
-  workspaceDir: string,
+  repoDir: string,
+  worktreesDir: string,
   configPath: string,
   name: string,
   repo: string,
@@ -143,7 +144,7 @@ async function devcontainerUp(
   const args = [
     "up",
     "--workspace-folder",
-    workspaceDir,
+    repoDir,
     "--config",
     configPath,
     "--mount-workspace-git-root",
@@ -157,6 +158,8 @@ async function devcontainerUp(
     `${LABEL_DRONE}=${name}`,
     "--id-label",
     `${LABEL_REPO}=${repo}`,
+    "--mount",
+    `type=bind,source=${worktreesDir},target=/workspaces/worktrees`,
     "--mount",
     `type=bind,source=${join(config.socketDir, name)},target=/var/run/hatchery-sockets`,
     ...(config.dotfilesRepo
