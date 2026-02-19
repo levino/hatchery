@@ -108,6 +108,7 @@ export async function spawn(docker: Docker, repo: string, config: Config) {
     remoteEnvs.push(["HATCHERY_TS_LOGIN_SERVER", `https://${config.tailscaleDomain}`]);
   }
   remoteEnvs.push(["HATCHERY_TS_HOSTNAME", name]);
+  remoteEnvs.push(["CLAUDE_CONFIG_DIR", "/workspaces/worktrees/.claude"]);
 
   // devcontainer up (async — returns when container is running)
   await devcontainerUp(docker, repoDir, workspaceDir, devcontainerConfig, name, repo, config, remoteEnvs);
