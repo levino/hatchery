@@ -52,7 +52,6 @@ function getRemoteUser(configPath: string, docker: Docker, droneName: string): s
 }
 
 export async function spawn(docker: Docker, repo: string, config: Config) {
-  // Detect local path vs GitHub org/repo
   const localPath = resolve(repo);
   const isLocal = existsSync(localPath);
   const name = isLocal ? `hatchery-${basename(localPath)}` : droneName(repo);
@@ -110,11 +109,13 @@ export async function spawn(docker: Docker, repo: string, config: Config) {
   remoteEnvs.push(["HATCHERY_TS_HOSTNAME", name]);
   remoteEnvs.push(["CLAUDE_CONFIG_DIR", "/workspaces/worktrees/.claude"]);
 
-  // devcontainer up (async — returns when container is running)
+  // devcontainer up hangs after the container starts (docker run blocks on
+  // long-running entrypoints like sshd/tailscaled), so we run it detached
+  // and poll for the container to appear.
   await devcontainerUp(docker, repoDir, workspaceDir, devcontainerConfig, name, repo, config, remoteEnvs);
 
-  // Run lifecycle commands (postCreateCommand, postStartCommand, etc.)
-  runUserCommands(repoDir, devcontainerConfig, name, remoteEnvs);
+  // Run lifecycle commands (postCreateCommand, postStartCommand, dotfiles, etc.)
+  runUserCommands(repoDir, devcontainerConfig, name, remoteEnvs, config);
 
   const user = getRemoteUser(devcontainerConfig, docker, name);
   const vscodeUri = `vscode://vscode-remote/ssh-remote+${name}/workspaces/worktrees/main`;
@@ -164,9 +165,6 @@ async function devcontainerUp(
     `type=bind,source=${worktreesDir},target=/workspaces/worktrees`,
     "--mount",
     `type=bind,source=${join(config.socketDir, name)},target=/var/run/hatchery-sockets`,
-    ...(config.dotfilesRepo
-      ? ["--dotfiles-repository", `https://github.com/${config.dotfilesRepo}`]
-      : []),
   ];
 
   // devcontainer up hangs after the container starts, so run it detached
@@ -194,17 +192,18 @@ async function devcontainerUp(
 }
 
 function runUserCommands(
-  workspaceDir: string,
+  repoDir: string,
   configPath: string,
   name: string,
   remoteEnvs: [string, string][],
+  config: Config,
 ) {
   const devcontainerBin = resolve("node_modules/.bin/devcontainer");
 
   const args = [
     "run-user-commands",
     "--workspace-folder",
-    workspaceDir,
+    repoDir,
     "--config",
     configPath,
     ...remoteEnvs.flatMap(([k, v]) => ["--remote-env", `${k}=${v}`]),
@@ -212,8 +211,10 @@ function runUserCommands(
     `${LABEL_MANAGED}=true`,
     "--id-label",
     `${LABEL_DRONE}=${name}`,
+    ...(config.dotfilesRepo
+      ? ["--dotfiles-repository", `https://github.com/${config.dotfilesRepo}`]
+      : []),
   ];
 
   execFileSync(devcontainerBin, args, { stdio: "inherit" });
 }
-
