@@ -51,7 +51,7 @@ function getRemoteUser(configPath: string, docker: Docker, droneName: string): s
   return "root";
 }
 
-export async function spawn(docker: Docker, repo: string, config: Config) {
+export async function spawn(docker: Docker, repo: string, config: Config, extraRepos: string[] = []) {
   const localPath = resolve(repo);
   const isLocal = existsSync(localPath);
   const name = isLocal ? `hatchery-${basename(localPath)}` : droneName(repo);
@@ -112,7 +112,8 @@ export async function spawn(docker: Docker, repo: string, config: Config) {
   // devcontainer up hangs after the container starts (docker run blocks on
   // long-running entrypoints like sshd/tailscaled), so we run it detached
   // and poll for the container to appear.
-  await devcontainerUp(docker, repoDir, workspaceDir, devcontainerConfig, name, repo, config, remoteEnvs);
+  const allRepos = [repo, ...extraRepos].join(",");
+  await devcontainerUp(docker, repoDir, workspaceDir, devcontainerConfig, name, allRepos, config, remoteEnvs);
 
   // Run lifecycle commands (postCreateCommand, postStartCommand, dotfiles, etc.)
   runUserCommands(repoDir, devcontainerConfig, name, remoteEnvs, config);

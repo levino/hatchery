@@ -1,7 +1,8 @@
 #!/usr/bin/env -S node --experimental-strip-types
 
 import { existsSync } from "node:fs";
-import { resolve, basename } from "node:path";
+import { resolve, basename, join } from "node:path";
+import { request } from "node:http";
 import { Command } from "commander";
 import { loadConfig } from "./config.ts";
 import {
@@ -12,6 +13,7 @@ import {
   stopDrone,
   startDrone,
   removeDrone,
+  readRepos,
 } from "./docker.ts";
 import { spawn } from "./spawn.ts";
 import { msg, status, HatcheryError } from "./zerg.ts";
@@ -32,11 +34,13 @@ program.name("hatchery").description("Manage devcontainer drones on the hive");
 program
   .command("spawn")
   .argument("<org/repo>", "GitHub repository to spawn")
+  .option("--repos <repos>", "Additional repos for token access (comma-separated org/repo)")
   .description("Spawn a new drone from a GitHub repository")
-  .action(async (repo: string) => {
+  .action(async (repo: string, opts: { repos?: string }) => {
     const config = loadConfig();
     const docker = createClient();
-    await spawn(docker, repo, config);
+    const extraRepos = opts.repos ? opts.repos.split(",").map((r: string) => r.trim()) : [];
+    await spawn(docker, repo, config, extraRepos);
   });
 
 program
@@ -117,6 +121,100 @@ program
     }
     await removeDrone(docker, d.id);
     console.log(msg.slayComplete);
+  });
+
+// --- repo subcommands for multi-repo access ---
+
+/** Send a POST to the creds-service management socket. */
+function managementRequest(socketDir: string, drone: string, repos: string[]): Promise<void> {
+  const socketPath = join(socketDir, "_management.sock");
+  const body = JSON.stringify({ drone, repos });
+  return new Promise((resolve, reject) => {
+    const req = request({ socketPath, path: "/update", method: "POST" }, (res) => {
+      let data = "";
+      res.on("data", (chunk: Buffer) => { data += chunk.toString(); });
+      res.on("end", () => {
+        if (res.statusCode === 200) resolve();
+        else reject(new HatcheryError(`Management request failed: ${data}`));
+      });
+    });
+    req.on("error", (err) => reject(new HatcheryError(`Cannot reach creds-service: ${err.message}`)));
+    req.end(body);
+  });
+}
+
+const repoCmd = program
+  .command("repo")
+  .description("Manage multi-repo access for drones");
+
+repoCmd
+  .command("list")
+  .argument("<org/repo>", "Drone identifier (org/repo or local path)")
+  .description("List repos a drone has token access to")
+  .action(async (repo: string) => {
+    const config = loadConfig();
+    const name = resolveDroneName(repo);
+    const repos = readRepos(config.socketDir, name);
+    if (!repos) {
+      console.error(msg.droneNotFound);
+      process.exit(1);
+    }
+    console.log(`Repos for ${name}:`);
+    for (const r of repos) {
+      console.log(`  ${r}`);
+    }
+  });
+
+repoCmd
+  .command("connect")
+  .argument("<org/repo>", "Drone identifier (org/repo or local path)")
+  .argument("<extra-repo>", "Repository to add access for (org/repo)")
+  .description("Grant a drone token access to an additional repo")
+  .action(async (repo: string, extraRepo: string) => {
+    const config = loadConfig();
+    const docker = createClient();
+    const name = resolveDroneName(repo);
+    const drone = await findDrone(docker, name);
+    if (!drone) {
+      console.error(msg.droneNotFound);
+      process.exit(1);
+    }
+    const currentRepos = readRepos(config.socketDir, name) ?? drone.repo.split(",").map((r: string) => r.trim()).filter(Boolean);
+    if (currentRepos.includes(extraRepo)) {
+      console.log(msg.repoAlreadyConnected);
+      return;
+    }
+    const newRepos = [...currentRepos, extraRepo];
+    await managementRequest(config.socketDir, name, newRepos);
+    console.log(msg.repoConnected);
+  });
+
+repoCmd
+  .command("disconnect")
+  .argument("<org/repo>", "Drone identifier (org/repo or local path)")
+  .argument("<extra-repo>", "Repository to remove access for (org/repo)")
+  .description("Revoke a drone's token access to a repo")
+  .action(async (repo: string, extraRepo: string) => {
+    const config = loadConfig();
+    const docker = createClient();
+    const name = resolveDroneName(repo);
+    const drone = await findDrone(docker, name);
+    if (!drone) {
+      console.error(msg.droneNotFound);
+      process.exit(1);
+    }
+    const currentRepos = readRepos(config.socketDir, name) ?? drone.repo.split(",").map((r: string) => r.trim()).filter(Boolean);
+    if (!currentRepos.includes(extraRepo)) {
+      console.log(msg.repoNotConnected);
+      return;
+    }
+    const newRepos = currentRepos.filter((r: string) => r !== extraRepo);
+    if (newRepos.length === 0) {
+      console.error(msg.repoCannotRemovePrimary);
+      process.exit(1);
+    }
+    await managementRequest(config.socketDir, name, newRepos);
+    console.log(msg.repoDisconnected);
   });
 
 program.parseAsync().catch((err) => {

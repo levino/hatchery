@@ -55,6 +55,16 @@ export class SocketManager {
     this.sockets.set(droneName, { server, repos });
   }
 
+  updateSocket(droneName: string, repos: string[]): void {
+    this.removeSocket(droneName);
+    this.createSocket(droneName, repos);
+  }
+
+  getRepos(droneName: string): string[] | null {
+    const entry = this.sockets.get(droneName);
+    return entry ? entry.repos : null;
+  }
+
   removeSocket(droneName: string): void {
     const entry = this.sockets.get(droneName);
     if (!entry) return;

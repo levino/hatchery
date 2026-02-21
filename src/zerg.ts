@@ -31,6 +31,12 @@ export const msg = {
   updateFailed: "Pull failed — spawning with existing genetic material. Adapt or perish.",
   noEvolutionPlan:
     "No devcontainer.json found in the repo. Add one so the drone knows how to build.\n  The spawning pool rejects unsequenced DNA — evolution requires a build plan.",
+  repoUpdated: "Genetic sequence updated.",
+  repoConnected: "Neural link established. Drone assimilating new DNA.",
+  repoDisconnected: "Genetic strand severed. Drone genome simplified.",
+  repoAlreadyConnected: "This genome is already part of the drone's DNA.",
+  repoNotConnected: "Cannot sever what was never linked.",
+  repoCannotRemovePrimary: "Cannot disconnect the primary genome — the drone would lose its identity.",
 };
 
 export function status(name: string, state: string): string {

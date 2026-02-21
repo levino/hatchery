@@ -1,4 +1,6 @@
 import Docker from "dockerode";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 
 const LABEL_MANAGED = "hatchery.managed";
 const LABEL_DRONE = "hatchery.drone";
@@ -80,4 +82,23 @@ export async function removeDrone(
   id: string,
 ): Promise<void> {
   await docker.getContainer(id).remove({ force: true });
+}
+
+export function reposFilePath(socketDir: string, droneName: string): string {
+  return join(socketDir, droneName, "repos.json");
+}
+
+export function readRepos(socketDir: string, droneName: string): string[] | null {
+  try {
+    const data = readFileSync(reposFilePath(socketDir, droneName), "utf-8");
+    return JSON.parse(data);
+  } catch {
+    return null;
+  }
+}
+
+export function writeRepos(socketDir: string, droneName: string, repos: string[]): void {
+  const dir = join(socketDir, droneName);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(reposFilePath(socketDir, droneName), JSON.stringify(repos));
 }
