@@ -16,7 +16,7 @@ case "$1" in
 esac
 CRED
 chmod +x /usr/local/bin/git-credential-hatchery
-git config --system credential.helper /usr/local/bin/git-credential-hatchery
+git config --system credential.https://github.com.helper /usr/local/bin/git-credential-hatchery
 git config --system url."https://github.com/".insteadOf "git@github.com:"
 
 # --- gh wrapper ---
