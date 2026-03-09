@@ -1,7 +1,7 @@
 #!/usr/bin/env -S node --experimental-strip-types
 
 import { createServer } from "node:http";
-import { mkdirSync, unlinkSync } from "node:fs";
+import { mkdirSync, unlinkSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import Docker from "dockerode";
 import { loadConfig } from "./config.ts";
@@ -105,6 +105,7 @@ function startManagementSocket() {
   });
 
   server.listen(socketPath, () => {
+    chmodSync(socketPath, 0o666);
     console.log(`Management socket ready at ${socketPath}`);
   });
 

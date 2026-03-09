@@ -63,7 +63,8 @@ if [ -n "$HATCHERY_TS_AUTH_KEY" ]; then
   sudo tailscale up \
     --login-server="$HATCHERY_TS_LOGIN_SERVER" \
     --authkey="$HATCHERY_TS_AUTH_KEY" \
-    --hostname="$HATCHERY_TS_HOSTNAME"
+    --hostname="$HATCHERY_TS_HOSTNAME" \
+    --accept-dns=false
 fi
 POST
 chmod +x /usr/local/bin/hatchery-post-start

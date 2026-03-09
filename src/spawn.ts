@@ -177,7 +177,7 @@ async function devcontainerUp(
   child.unref();
 
   // Poll until the container is running
-  const deadline = Date.now() + 120_000;
+  const deadline = Date.now() + 300_000;
   while (Date.now() < deadline) {
     const drone = await findDrone(docker, name);
     if (drone && drone.state === "running") {
