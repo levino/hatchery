@@ -60,11 +60,15 @@ fi
 
 # Tailscale / Headscale join
 if [ -n "$HATCHERY_TS_AUTH_KEY" ]; then
+  # Save Docker's original resolv.conf before tailscale overwrites it
+  cp /etc/resolv.conf /tmp/resolv.conf.bak
   sudo tailscale up \
     --login-server="$HATCHERY_TS_LOGIN_SERVER" \
     --authkey="$HATCHERY_TS_AUTH_KEY" \
     --hostname="$HATCHERY_TS_HOSTNAME" \
     --accept-dns=false
+  # Restore Docker DNS if tailscale overwrote it
+  sudo cp /tmp/resolv.conf.bak /etc/resolv.conf
 fi
 POST
 chmod +x /usr/local/bin/hatchery-post-start
