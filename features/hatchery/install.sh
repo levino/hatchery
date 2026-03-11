@@ -128,7 +128,7 @@ if [ "$HATCHERY_PROVIDER" = "forgejo" ] && [ -n "$HATCHERY_FORGEJO_HOST" ]; then
   chmod 644 /var/run/hatchery-sockets/.forgejo-token
 
   # Persist env vars for SSH sessions
-  cat > /etc/profile.d/hatchery-forgejo.sh <<ENVEOF
+  sudo tee /etc/profile.d/hatchery-forgejo.sh > /dev/null <<ENVEOF
 export HATCHERY_PROVIDER=forgejo
 export HATCHERY_FORGEJO_HOST=${HATCHERY_FORGEJO_HOST}
 export HATCHERY_FORGEJO_FAKE_TOKEN=${HATCHERY_FORGEJO_FAKE_TOKEN}
@@ -138,13 +138,13 @@ ENVEOF
   nohup /usr/local/bin/hatchery-forgejo-bridge > /tmp/hatchery-bridge.log 2>&1 &
 
   # Configure git credential helper for the proxy
-  git config --system credential.http://localhost:9998.helper /usr/local/bin/git-credential-hatchery-forgejo
+  sudo git config --system credential.http://localhost:9998.helper /usr/local/bin/git-credential-hatchery-forgejo
 
   # URL rewrites: redirect Forgejo HTTPS and SSH URLs to local proxy
   # Unset first to be idempotent (postStartCommand runs on every container start)
-  git config --system --unset-all "url.http://localhost:9998/.insteadOf" 2>/dev/null || true
-  git config --system "url.http://localhost:9998/.insteadOf" "https://${HATCHERY_FORGEJO_HOST}/"
-  git config --system --add "url.http://localhost:9998/.insteadOf" "git@${HATCHERY_FORGEJO_HOST}:"
+  sudo git config --system --unset-all "url.http://localhost:9998/.insteadOf" 2>/dev/null || true
+  sudo git config --system "url.http://localhost:9998/.insteadOf" "https://${HATCHERY_FORGEJO_HOST}/"
+  sudo git config --system --add "url.http://localhost:9998/.insteadOf" "git@${HATCHERY_FORGEJO_HOST}:"
 
   # Set up tea wrapper if tea is installed
   if command -v tea >/dev/null 2>&1; then
