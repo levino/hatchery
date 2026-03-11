@@ -115,15 +115,16 @@ fi
 
 # Tailscale / Headscale join
 if [ -n "$HATCHERY_TS_AUTH_KEY" ]; then
-  # Save Docker's DNS before tailscale overwrites resolv.conf
+  # Save Docker's DNS before tailscale touches anything
   DOCKER_NS=$(grep '^nameserver' /etc/resolv.conf | head -1 | awk '{print $2}')
+  # --accept-dns=false prevents tailscale from overwriting /etc/resolv.conf
   sudo tailscale up \
     --login-server="$HATCHERY_TS_LOGIN_SERVER" \
     --authkey="$HATCHERY_TS_AUTH_KEY" \
-    --hostname="$HATCHERY_TS_HOSTNAME"
-  # Headscale may not have upstream DNS configured, so tailscale's 100.100.100.100
-  # can only resolve MagicDNS names but not external hosts. Write a resolv.conf
-  # with both: tailscale for MagicDNS + Docker's original NS for everything else.
+    --hostname="$HATCHERY_TS_HOSTNAME" \
+    --accept-dns=false
+  # Write resolv.conf with both: tailscale 100.100.100.100 for MagicDNS
+  # (*.levinkeller.local) + Docker's original NS for external resolution.
   printf 'nameserver 100.100.100.100\nnameserver %s\nsearch levinkeller.local\n' "$DOCKER_NS" \
     | sudo tee /etc/resolv.conf > /dev/null
 fi
