@@ -5,9 +5,10 @@ import { mkdirSync, unlinkSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import Docker from "dockerode";
 import { loadConfig } from "./config.ts";
-import { LABEL_MANAGED, LABEL_DRONE, LABEL_REPO, listDrones, readRepos, writeRepos } from "./docker.ts";
+import { LABEL_MANAGED, LABEL_DRONE, LABEL_REPO, listDrones, readRepoInfo, writeRepoInfo, writeRepos, type RepoInfo } from "./docker.ts";
 import { TokenProvider } from "./creds/token.ts";
 import { SocketManager } from "./creds/server.ts";
+import { ProxyManager } from "./creds/proxy.ts";
 import { msg } from "./zerg.ts";
 
 const config = loadConfig();
@@ -16,18 +17,26 @@ mkdirSync(config.socketDir, { recursive: true });
 
 const tp = new TokenProvider(config);
 const sm = new SocketManager(config.socketDir, tp);
+const pm = new ProxyManager(config.socketDir);
 const docker = new Docker();
 
-// Recovery: recreate sockets for existing drones
+// Recovery: recreate sockets/proxies for existing drones
 async function recover() {
   console.log(msg.recovering);
   const drones = await listDrones(docker);
   for (const d of drones) {
     if (d.state === "running" && d.repo) {
-      // Prefer repos.json (survives runtime updates) over Docker label
-      const repos = readRepos(config.socketDir, d.name) ?? parseRepos(d.repo);
-      sm.createSocket(d.name, repos);
-      writeRepos(config.socketDir, d.name, repos);
+      const info = readRepoInfo(config.socketDir, d.name);
+      if (info && info.provider === "forgejo" && info.host) {
+        const forgejoHost = config.forgejo[info.host];
+        if (forgejoHost) {
+          pm.createProxy(d.name, info.repos, forgejoHost, info.fakeToken);
+        }
+      } else {
+        const repos = info?.repos ?? parseRepos(d.repo);
+        sm.createSocket(d.name, repos);
+        writeRepos(config.socketDir, d.name, repos);
+      }
     }
   }
 }
@@ -50,11 +59,21 @@ async function watchEvents() {
 
     if (event.Action === "start") {
       const repo = event.Actor.Attributes[LABEL_REPO];
-      const repos = readRepos(config.socketDir, droneName) ?? parseRepos(repo);
-      sm.createSocket(droneName, repos);
-      writeRepos(config.socketDir, droneName, repos);
+      const info = readRepoInfo(config.socketDir, droneName);
+
+      if (info && info.provider === "forgejo" && info.host) {
+        const forgejoHost = config.forgejo[info.host];
+        if (forgejoHost) {
+          pm.createProxy(droneName, info.repos, forgejoHost, info.fakeToken);
+        }
+      } else {
+        const repos = info?.repos ?? parseRepos(repo);
+        sm.createSocket(droneName, repos);
+        writeRepos(config.socketDir, droneName, repos);
+      }
     } else if (event.Action === "stop" || event.Action === "die") {
       sm.removeSocket(droneName);
+      pm.removeProxy(droneName);
     }
   });
 
@@ -118,11 +137,13 @@ let mgmtServer: ReturnType<typeof createServer>;
 process.on("SIGINT", () => {
   console.log("Shutting down...");
   sm.shutdown();
+  pm.shutdown();
   mgmtServer?.close();
   process.exit(0);
 });
 process.on("SIGTERM", () => {
   sm.shutdown();
+  pm.shutdown();
   mgmtServer?.close();
   process.exit(0);
 });

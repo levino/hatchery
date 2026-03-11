@@ -3,6 +3,12 @@ import { resolve, join } from "node:path";
 import { homedir } from "node:os";
 import dotenv from "dotenv";
 
+export interface ForgejoHost {
+  url: string;
+  token: string;
+  user: string;
+}
+
 export interface Config {
   githubClientId: string;
   githubAppPrivateKey: string;
@@ -12,6 +18,7 @@ export interface Config {
   tailscaleDomain: string;
   socketDir: string;
   dotfilesRepo: string;
+  forgejo: Record<string, ForgejoHost>; // hostname -> config
 }
 
 function requireEnv(name: string): string {
@@ -28,8 +35,8 @@ export function loadConfig(): Config {
     dotenv.config({ path: "/etc/hatchery.env" });
   }
 
-  let privateKey = requireEnv("HATCHERY_GITHUB_APP_KEY");
-  if (!privateKey.startsWith("-----")) {
+  let privateKey = process.env.HATCHERY_GITHUB_APP_KEY ?? "";
+  if (privateKey && !privateKey.startsWith("-----")) {
     const keyPath = resolve(privateKey);
     if (existsSync(keyPath)) {
       privateKey = readFileSync(keyPath, "utf-8");
@@ -37,23 +44,34 @@ export function loadConfig(): Config {
   }
 
   const installations: Record<string, string> = {};
+  const forgejo: Record<string, ForgejoHost> = {};
+
   if (existsSync("config.json")) {
     const raw = JSON.parse(readFileSync("config.json", "utf-8"));
     Object.assign(installations, raw.installations ?? {});
+    if (raw.forgejo) {
+      for (const [host, cfg] of Object.entries(raw.forgejo)) {
+        forgejo[host] = cfg as ForgejoHost;
+      }
+    }
   }
-  if (Object.keys(installations).length === 0) {
-    throw new Error("No installations configured — add them to config.json");
+
+  const hasGitHub = Object.keys(installations).length > 0;
+  const hasForgejo = Object.keys(forgejo).length > 0;
+  if (!hasGitHub && !hasForgejo) {
+    throw new Error("No installations or forgejo hosts configured — add them to config.json");
   }
 
   return {
-    githubClientId: requireEnv("HATCHERY_GITHUB_CLIENT_ID"),
+    githubClientId: process.env.HATCHERY_GITHUB_CLIENT_ID ?? "",
     githubAppPrivateKey: privateKey,
-    githubUser: requireEnv("HATCHERY_GITHUB_USER"),
+    githubUser: process.env.HATCHERY_GITHUB_USER ?? "",
     installations,
     headscaleAuthKey: requireEnv("HATCHERY_HEADSCALE_AUTH_KEY"),
     tailscaleDomain: requireEnv("HATCHERY_TAILSCALE_DOMAIN"),
     socketDir: process.env.HATCHERY_SOCKET_DIR || join(homedir(), ".hatchery", "sockets"),
     dotfilesRepo: process.env.HATCHERY_DOTFILES_REPO || "",
+    forgejo,
   };
 }
 
@@ -70,4 +88,3 @@ export function installationId(
   }
   return id;
 }
-

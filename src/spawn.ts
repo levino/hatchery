@@ -6,12 +6,15 @@ import Docker from "dockerode";
 import {
   findDrone,
   droneName,
+  forgejoFroneName,
+  writeRepoInfo,
   LABEL_MANAGED,
   LABEL_DRONE,
   LABEL_REPO,
 } from "./docker.ts";
 import type { Config } from "./config.ts";
 import { msg, HatcheryError } from "./zerg.ts";
+import { randomBytes } from "node:crypto";
 
 const HATCHERY_DIR = join(homedir(), ".hatchery", "repos");
 
@@ -21,6 +24,55 @@ const DEVCONTAINER_CONFIG_PATHS = [
   ".devcontainer.json",
   "devcontainer.json",
 ];
+
+/**
+ * Parse a repo argument into its components.
+ * - "org/repo" → GitHub
+ * - "forgejo.example.com/org/repo" → Forgejo
+ * - "/absolute/path" → local
+ */
+export interface ParsedRepo {
+  provider: "github" | "forgejo" | "local";
+  host?: string;       // only for forgejo
+  repo: string;        // org/repo
+  name: string;        // drone name
+  forgejoHost?: ForgejoHost;
+}
+
+export function parseRepoArg(repoArg: string, config: Config): ParsedRepo {
+  const localPath = resolve(repoArg);
+  if (existsSync(localPath)) {
+    return {
+      provider: "local",
+      repo: repoArg,
+      name: `hatchery-${basename(localPath)}`,
+    };
+  }
+
+  const parts = repoArg.split("/");
+  if (parts.length === 3) {
+    // host/org/repo
+    const [host, org, repo] = parts;
+    const forgejoHost = config.forgejo[host];
+    if (!forgejoHost) {
+      throw new HatcheryError(`No Forgejo host configured for "${host}" — add it to config.json`);
+    }
+    return {
+      provider: "forgejo",
+      host,
+      repo: `${org}/${repo}`,
+      name: forgejoFroneName(host, `${org}/${repo}`),
+      forgejoHost,
+    };
+  }
+
+  // Default: GitHub (org/repo)
+  return {
+    provider: "github",
+    repo: repoArg,
+    name: droneName(repoArg),
+  };
+}
 
 /**
  * Find the devcontainer.json config file inside a repo directory.
@@ -38,12 +90,11 @@ function findDevcontainerConfig(repoDir: string): string | null {
 
 /**
  * Read the remoteUser from a devcontainer.json file.
- * Falls back to container image default user via Docker inspect.
+ * Falls back to "root".
  */
-function getRemoteUser(configPath: string, docker: Docker, droneName: string): string {
+function getRemoteUser(configPath: string): string {
   try {
     const raw = readFileSync(configPath, "utf-8");
-    // Strip JSON-with-comments (line comments only, good enough)
     const stripped = raw.replace(/^\s*\/\/.*$/gm, "");
     const parsed = JSON.parse(stripped);
     if (parsed.remoteUser) return parsed.remoteUser;
@@ -51,10 +102,9 @@ function getRemoteUser(configPath: string, docker: Docker, droneName: string): s
   return "root";
 }
 
-export async function spawn(docker: Docker, repo: string, config: Config, extraRepos: string[] = []) {
-  const localPath = resolve(repo);
-  const isLocal = existsSync(localPath);
-  const name = isLocal ? `hatchery-${basename(localPath)}` : droneName(repo);
+export async function spawn(docker: Docker, repoArg: string, config: Config, extraRepos: string[] = []) {
+  const parsed = parseRepoArg(repoArg, config);
+  const name = parsed.name;
 
   const existing = await findDrone(docker, name);
   if (existing) {
@@ -67,23 +117,54 @@ export async function spawn(docker: Docker, repo: string, config: Config, extraR
 
   console.log(msg.spawnStarting);
 
-  // Directory layout for worktree support:
-  //   ~/.hatchery/repos/<drone-name>/
-  //   ├── worktrees/           <- mounted via --mount → /workspaces/worktrees/
-  //   │   ├── main/            <- git clone, used as --workspace-folder
-  //   │   ├── feature-x/       <- git worktree
-  //   │   └── bugfix/          <- git worktree
   const workspaceDir = join(HATCHERY_DIR, name, "worktrees");
   const repoDir = join(workspaceDir, "main");
+
+  // Clone
   if (!existsSync(repoDir)) {
     console.log(msg.cloning);
     mkdirSync(workspaceDir, { recursive: true });
-    const cloneSource = isLocal ? localPath : `git@github.com:${repo}.git`;
-    execFileSync("git", ["clone", cloneSource, repoDir], { stdio: "inherit" });
+    let cloneSource: string;
+    if (parsed.provider === "local") {
+      cloneSource = resolve(repoArg);
+    } else if (parsed.provider === "forgejo") {
+      // Clone via HTTPS with real PAT on the host (trusted)
+      // Use env vars so the token doesn't persist in .git/config
+      const fh = parsed.forgejoHost!;
+      cloneSource = `${fh.url}/${parsed.repo}.git`;
+      execFileSync("git", ["clone", cloneSource, repoDir], {
+        stdio: "inherit",
+        env: {
+          ...process.env,
+          GIT_CONFIG_COUNT: "1",
+          GIT_CONFIG_KEY_0: `http.${fh.url}/.extraheader`,
+          GIT_CONFIG_VALUE_0: `Authorization: token ${fh.token}`,
+        },
+      });
+    } else {
+      cloneSource = `git@github.com:${parsed.repo}.git`;
+    }
+    if (parsed.provider !== "forgejo") {
+      execFileSync("git", ["clone", cloneSource, repoDir], { stdio: "inherit" });
+    }
   } else {
     console.log(msg.updating);
     try {
-      execFileSync("git", ["pull", "--ff-only"], { cwd: repoDir, stdio: "inherit" });
+      if (parsed.provider === "forgejo") {
+        const fh = parsed.forgejoHost!;
+        execFileSync("git", ["pull", "--ff-only"], {
+          cwd: repoDir,
+          stdio: "inherit",
+          env: {
+            ...process.env,
+            GIT_CONFIG_COUNT: "1",
+            GIT_CONFIG_KEY_0: `http.${fh.url}/.extraheader`,
+            GIT_CONFIG_VALUE_0: `Authorization: token ${fh.token}`,
+          },
+        });
+      } else {
+        execFileSync("git", ["pull", "--ff-only"], { cwd: repoDir, stdio: "inherit" });
+      }
     } catch {
       console.log(msg.updateFailed);
     }
@@ -109,16 +190,29 @@ export async function spawn(docker: Docker, repo: string, config: Config, extraR
   remoteEnvs.push(["HATCHERY_TS_HOSTNAME", name]);
   remoteEnvs.push(["CLAUDE_CONFIG_DIR", "/workspaces/worktrees/.claude"]);
 
-  // devcontainer up hangs after the container starts (docker run blocks on
-  // long-running entrypoints like sshd/tailscaled), so we run it detached
-  // and poll for the container to appear.
-  const allRepos = [repo, ...extraRepos].join(",");
+  // Forgejo-specific: write repo info so creds-service creates the proxy on container start
+  if (parsed.provider === "forgejo") {
+    const fakeToken = `hatchery:${name}:${randomBytes(16).toString("hex")}`;
+    writeRepoInfo(config.socketDir, name, {
+      provider: "forgejo",
+      host: parsed.host!,
+      repos: [parsed.repo, ...extraRepos],
+      fakeToken,
+    });
+    remoteEnvs.push(["HATCHERY_PROVIDER", "forgejo"]);
+    remoteEnvs.push(["HATCHERY_FORGEJO_HOST", parsed.host!]);
+    remoteEnvs.push(["HATCHERY_FORGEJO_FAKE_TOKEN", fakeToken]);
+  }
+
+  const allRepos = parsed.provider === "forgejo"
+    ? `${parsed.host}/${parsed.repo}`
+    : [parsed.repo, ...extraRepos].join(",");
   await devcontainerUp(docker, repoDir, workspaceDir, devcontainerConfig, name, allRepos, config, remoteEnvs);
 
   // Run lifecycle commands (postCreateCommand, postStartCommand, dotfiles, etc.)
   runUserCommands(repoDir, devcontainerConfig, name, remoteEnvs, config);
 
-  const user = getRemoteUser(devcontainerConfig, docker, name);
+  const user = getRemoteUser(devcontainerConfig);
   const vscodeUri = `vscode://vscode-remote/ssh-remote+${name}/workspaces/worktrees/main`;
   const link = `\x1b]8;;${vscodeUri}\x1b\\${vscodeUri}\x1b]8;;\x1b\\`;
   console.log(msg.spawnComplete);
@@ -168,8 +262,6 @@ async function devcontainerUp(
     `type=bind,source=${join(config.socketDir, name)},target=/var/run/hatchery-sockets`,
   ];
 
-  // devcontainer up hangs after the container starts, so run it detached
-  // and poll docker for the container to appear
   const child = spawnChild(devcontainerBin, args, {
     stdio: "inherit",
     detached: true,
@@ -181,7 +273,6 @@ async function devcontainerUp(
   while (Date.now() < deadline) {
     const drone = await findDrone(docker, name);
     if (drone && drone.state === "running") {
-      // Container is up, kill the hanging devcontainer process
       try { process.kill(-child.pid!, "SIGTERM"); } catch {}
       return;
     }

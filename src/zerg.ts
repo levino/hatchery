@@ -37,6 +37,8 @@ export const msg = {
   repoAlreadyConnected: "This genome is already part of the drone's DNA.",
   repoNotConnected: "Cannot sever what was never linked.",
   repoCannotRemovePrimary: "Cannot disconnect the primary genome — the drone would lose its identity.",
+  proxyCreated: "Nydus worm online.",
+  proxyRemoved: "Nydus worm collapsed.",
 };
 
 export function status(name: string, state: string): string {

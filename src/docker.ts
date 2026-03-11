@@ -15,8 +15,21 @@ export interface Drone {
   state: string;
 }
 
+export interface RepoInfo {
+  provider: "github" | "forgejo";
+  host?: string;       // forgejo hostname, absent for github
+  repos: string[];
+  fakeToken?: string;  // only for forgejo
+}
+
 export function droneName(repo: string): string {
   return `hatchery-${repo.replace("/", "-")}`;
+}
+
+/** Build drone name for forgejo repos: hatchery-<host>-<org>-<repo> */
+export function forgejoFroneName(host: string, repo: string): string {
+  const shortHost = host.replace(/\./g, "-");
+  return `hatchery-${shortHost}-${repo.replace("/", "-")}`;
 }
 
 export function hostname(name: string, domain: string): string {
@@ -88,17 +101,33 @@ export function reposFilePath(socketDir: string, droneName: string): string {
   return join(socketDir, droneName, "repos.json");
 }
 
-export function readRepos(socketDir: string, droneName: string): string[] | null {
+/** Read repos.json — handles both old array format and new RepoInfo object. */
+export function readRepoInfo(socketDir: string, droneName: string): RepoInfo | null {
   try {
     const data = readFileSync(reposFilePath(socketDir, droneName), "utf-8");
-    return JSON.parse(data);
+    const parsed = JSON.parse(data);
+    if (Array.isArray(parsed)) {
+      return { provider: "github", repos: parsed };
+    }
+    return parsed as RepoInfo;
   } catch {
     return null;
   }
 }
 
-export function writeRepos(socketDir: string, droneName: string, repos: string[]): void {
+/** Backward-compatible: returns just the repos array. */
+export function readRepos(socketDir: string, droneName: string): string[] | null {
+  const info = readRepoInfo(socketDir, droneName);
+  return info ? info.repos : null;
+}
+
+export function writeRepoInfo(socketDir: string, droneName: string, info: RepoInfo): void {
   const dir = join(socketDir, droneName);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(reposFilePath(socketDir, droneName), JSON.stringify(repos));
+  writeFileSync(reposFilePath(socketDir, droneName), JSON.stringify(info));
+}
+
+/** Backward-compatible: writes a GitHub-style repos array. */
+export function writeRepos(socketDir: string, droneName: string, repos: string[]): void {
+  writeRepoInfo(socketDir, droneName, { provider: "github", repos });
 }

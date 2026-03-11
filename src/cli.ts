@@ -8,6 +8,7 @@ import { loadConfig } from "./config.ts";
 import {
   createClient,
   droneName,
+  forgejoFroneName,
   findDrone,
   listDrones,
   stopDrone,
@@ -18,11 +19,15 @@ import {
 import { spawn } from "./spawn.ts";
 import { msg, status, HatcheryError } from "./zerg.ts";
 
-/** Resolve a CLI argument to the drone name, handling both local paths and org/repo. */
+/** Resolve a CLI argument to the drone name, handling local paths, org/repo, and host/org/repo. */
 function resolveDroneName(repo: string): string {
   const localPath = resolve(repo);
   if (existsSync(localPath)) {
     return `hatchery-${basename(localPath)}`;
+  }
+  const parts = repo.split("/");
+  if (parts.length === 3) {
+    return forgejoFroneName(parts[0], `${parts[1]}/${parts[2]}`);
   }
   return droneName(repo);
 }
@@ -33,9 +38,9 @@ program.name("hatchery").description("Manage devcontainer drones on the hive");
 
 program
   .command("spawn")
-  .argument("<org/repo>", "GitHub repository to spawn")
+  .argument("<repo>", "Repository to spawn (org/repo for GitHub, host/org/repo for Forgejo)")
   .option("--repos <repos>", "Additional repos for token access (comma-separated org/repo)")
-  .description("Spawn a new drone from a GitHub repository")
+  .description("Spawn a new drone from a repository")
   .action(async (repo: string, opts: { repos?: string }) => {
     const config = loadConfig();
     const docker = createClient();
