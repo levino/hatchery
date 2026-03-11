@@ -18,6 +18,19 @@ import { randomBytes } from "node:crypto";
 
 const HATCHERY_DIR = join(homedir(), ".hatchery", "repos");
 
+/**
+ * Copy a local feature directory into the repo's .devcontainer/ folder
+ * so the devcontainer CLI can reference it as "./hatchery".
+ * Returns a cleanup function to remove the copy afterwards.
+ */
+function installLocalFeature(featureDir: string, repoDir: string): () => void {
+  const destDir = join(repoDir, ".devcontainer", "hatchery");
+  execFileSync("rm", ["-rf", destDir]);
+  mkdirSync(join(repoDir, ".devcontainer"), { recursive: true });
+  execFileSync("cp", ["-r", resolve(featureDir), destDir]);
+  return () => { try { execFileSync("rm", ["-rf", destDir]); } catch {} };
+}
+
 /** Known locations for devcontainer.json, checked in order. */
 const DEVCONTAINER_CONFIG_PATHS = [
   ".devcontainer/devcontainer.json",
@@ -232,11 +245,20 @@ async function devcontainerUp(
 ): Promise<void> {
   const devcontainerBin = resolve("node_modules/.bin/devcontainer");
 
+  const localFeatureDir = process.env.HATCHERY_LOCAL_FEATURE;
+  let localFeatureCleanup: (() => void) | undefined;
+  let hatcheryFeatureRef = "ghcr.io/levino/hatchery/hatchery:1";
+  if (localFeatureDir) {
+    localFeatureCleanup = installLocalFeature(localFeatureDir, repoDir);
+    hatcheryFeatureRef = "./hatchery";
+    console.log(`Using local feature: ${localFeatureDir}`);
+  }
+
   const additionalFeatures = JSON.stringify({
     "ghcr.io/devcontainers/features/github-cli:1": {},
     "ghcr.io/devcontainers/features/sshd:1": {},
     "ghcr.io/tailscale/codespace/tailscale": {},
-    "ghcr.io/levino/hatchery/hatchery:1": {},
+    [hatcheryFeatureRef]: {},
   });
 
   const args = [
@@ -274,12 +296,14 @@ async function devcontainerUp(
     const drone = await findDrone(docker, name);
     if (drone && drone.state === "running") {
       try { process.kill(-child.pid!, "SIGTERM"); } catch {}
+      localFeatureCleanup?.();
       return;
     }
     await new Promise((r) => setTimeout(r, 2000));
   }
 
   try { process.kill(-child.pid!, "SIGTERM"); } catch {}
+  localFeatureCleanup?.();
   throw new HatcheryError(msg.spawnTimeout);
 }
 
