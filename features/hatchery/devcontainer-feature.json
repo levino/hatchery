@@ -1,6 +1,6 @@
 {
   "id": "hatchery",
-  "version": "1.5.2",
+  "version": "1.5.3",
   "name": "Hatchery Drone Setup",
   "description": "SSH keys, Tailscale join, git/gh credential helpers",
   "installsAfter": [
