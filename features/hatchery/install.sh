@@ -68,23 +68,8 @@ exec "$REAL_TEA" "$@"
 TEA
 chmod +x /usr/local/bin/tea-hatchery-wrapper
 
-# --- TCP→Unix socket bridge script (Forgejo) ---
-cat > /usr/local/bin/hatchery-forgejo-bridge <<'BRIDGE'
-#!/usr/bin/env node
-const net = require("net");
-const SOCKET_PATH = "/var/run/hatchery-sockets/proxy.sock";
-const server = net.createServer((client) => {
-  const upstream = net.connect(SOCKET_PATH);
-  client.pipe(upstream);
-  upstream.pipe(client);
-  client.on("error", () => upstream.destroy());
-  upstream.on("error", () => client.destroy());
-});
-server.listen(9998, "127.0.0.1", () => {
-  console.log("Hatchery Forgejo bridge listening on 127.0.0.1:9998");
-});
-BRIDGE
-chmod +x /usr/local/bin/hatchery-forgejo-bridge
+# --- socat for TCP→Unix socket bridge (Forgejo) ---
+apt-get update -qq && apt-get install -y -qq socat > /dev/null 2>&1
 
 # --- postStartCommand entrypoint ---
 cat > /usr/local/bin/hatchery-post-start <<'POST'
@@ -135,7 +120,7 @@ export HATCHERY_FORGEJO_FAKE_TOKEN=${HATCHERY_FORGEJO_FAKE_TOKEN}
 ENVEOF
 
   # Start TCP→Unix socket bridge for the proxy
-  nohup /usr/local/bin/hatchery-forgejo-bridge > /tmp/hatchery-bridge.log 2>&1 &
+  nohup socat TCP-LISTEN:9998,bind=127.0.0.1,reuseaddr,fork UNIX-CONNECT:/var/run/hatchery-sockets/proxy.sock > /tmp/hatchery-bridge.log 2>&1 &
 
   # Configure git credential helper for the proxy
   sudo git config --system credential.http://localhost:9998.helper /usr/local/bin/git-credential-hatchery-forgejo
