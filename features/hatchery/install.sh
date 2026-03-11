@@ -141,6 +141,8 @@ ENVEOF
   git config --system credential.http://localhost:9998.helper /usr/local/bin/git-credential-hatchery-forgejo
 
   # URL rewrites: redirect Forgejo HTTPS and SSH URLs to local proxy
+  # Unset first to be idempotent (postStartCommand runs on every container start)
+  git config --system --unset-all "url.http://localhost:9998/.insteadOf" 2>/dev/null || true
   git config --system "url.http://localhost:9998/.insteadOf" "https://${HATCHERY_FORGEJO_HOST}/"
   git config --system --add "url.http://localhost:9998/.insteadOf" "git@${HATCHERY_FORGEJO_HOST}:"
 
