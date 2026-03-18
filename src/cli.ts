@@ -40,12 +40,13 @@ program
   .command("spawn")
   .argument("<repo>", "Repository to spawn (org/repo for GitHub, host/org/repo for Forgejo)")
   .option("--repos <repos>", "Additional repos for token access (comma-separated org/repo)")
+  .option("--hostname <hostname>", "Override Tailscale hostname for the drone")
   .description("Spawn a new drone from a repository")
-  .action(async (repo: string, opts: { repos?: string }) => {
+  .action(async (repo: string, opts: { repos?: string; hostname?: string }) => {
     const config = loadConfig();
     const docker = createClient();
     const extraRepos = opts.repos ? opts.repos.split(",").map((r: string) => r.trim()) : [];
-    await spawn(docker, repo, config, extraRepos);
+    await spawn(docker, repo, config, extraRepos, opts.hostname);
   });
 
 program

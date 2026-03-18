@@ -94,7 +94,17 @@ export async function removeDrone(
   docker: Docker,
   id: string,
 ): Promise<void> {
-  await docker.getContainer(id).remove({ force: true });
+  const container = docker.getContainer(id);
+  const info = await container.inspect();
+  const volumes = (info.Mounts ?? [])
+    .filter((m: { Type: string; Name?: string }) => m.Type === "volume" && m.Name)
+    .map((m: { Name: string }) => m.Name);
+  await container.remove({ force: true });
+  for (const vol of volumes) {
+    try {
+      await docker.getVolume(vol).remove();
+    } catch {}
+  }
 }
 
 export function reposFilePath(socketDir: string, droneName: string): string {

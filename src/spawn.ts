@@ -115,7 +115,7 @@ function getRemoteUser(configPath: string): string {
   return "root";
 }
 
-export async function spawn(docker: Docker, repoArg: string, config: Config, extraRepos: string[] = []) {
+export async function spawn(docker: Docker, repoArg: string, config: Config, extraRepos: string[] = [], tsHostname?: string) {
   const parsed = parseRepoArg(repoArg, config);
   const name = parsed.name;
 
@@ -200,7 +200,7 @@ export async function spawn(docker: Docker, repoArg: string, config: Config, ext
   if (config.tailscaleDomain) {
     remoteEnvs.push(["HATCHERY_TS_LOGIN_SERVER", `https://${config.tailscaleDomain}`]);
   }
-  remoteEnvs.push(["HATCHERY_TS_HOSTNAME", name]);
+  remoteEnvs.push(["HATCHERY_TS_HOSTNAME", tsHostname ?? name]);
   remoteEnvs.push(["CLAUDE_CONFIG_DIR", "/workspaces/worktrees/.claude"]);
 
   // Forgejo-specific: write repo info so creds-service creates the proxy on container start
@@ -284,9 +284,15 @@ async function devcontainerUp(
     `type=bind,source=${join(config.socketDir, name)},target=/var/run/hatchery-sockets`,
   ];
 
+  const childEnv = { ...process.env };
+  for (const [k, v] of remoteEnvs) {
+    childEnv[k] = v;
+  }
+
   const child = spawnChild(devcontainerBin, args, {
     stdio: "inherit",
     detached: true,
+    env: childEnv,
   });
   child.unref();
 

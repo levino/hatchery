@@ -69,7 +69,8 @@ TEA
 chmod +x /usr/local/bin/tea-hatchery-wrapper
 
 # --- socat for TCP→Unix socket bridge (Forgejo) ---
-apt-get update -qq && apt-get install -y -qq socat > /dev/null 2>&1
+apt-get update -qq && apt-get install -y -qq socat mosh locales > /dev/null 2>&1
+sed -i 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && locale-gen > /dev/null 2>&1
 
 # --- postStartCommand entrypoint ---
 cat > /usr/local/bin/hatchery-post-start <<'POST'
