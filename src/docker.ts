@@ -97,7 +97,8 @@ export async function removeDrone(
   const container = docker.getContainer(id);
   const info = await container.inspect();
   const volumes = (info.Mounts ?? [])
-    .filter((m: { Type: string; Name?: string }) => m.Type === "volume" && m.Name)
+    .filter((m: { Type: string; Name?: string; Destination?: string }) =>
+      m.Type === "volume" && m.Name && !m.Name.startsWith("ssh-host-keys-"))
     .map((m: { Name: string }) => m.Name);
   await container.remove({ force: true });
   for (const vol of volumes) {
