@@ -1,6 +1,43 @@
 #!/bin/sh
 set -e
 
+# --- Claude Code config directory (persistent across rebuilds) ---
+CLAUDE_DIR="/workspaces/.claude"
+mkdir -p "$CLAUDE_DIR"
+cat > "$CLAUDE_DIR/CLAUDE.md" <<'CLAUDEMD'
+# Hatchery Dev Environment
+
+You are running inside a Hatchery drone — a devcontainer managed by Hatchery.
+
+## How credentials work
+
+- Git and GitHub credentials are provided automatically by the **hatchery credential helper**
+- The credential helper fetches short-lived tokens from a Unix socket at `/var/run/hatchery-sockets/creds.sock`
+- The `gh` CLI is wrapped to automatically use these tokens
+- Tokens are scoped to specific repositories via a GitHub App installation
+
+## Critical Rules
+
+- NEVER run `gh auth login`, `gh auth setup-git`, or any `gh auth` commands
+- NEVER hardcode tokens or credentials in `.git/config`, `.gitconfig`, or anywhere else
+- NEVER modify git credential helper configuration (`git config credential.*`)
+- NEVER store tokens in environment variables or files
+
+## When git authentication fails
+
+If you get a permission error accessing a repository:
+
+1. Do NOT try to fix it yourself — no token hardcoding, no `gh auth`, no workarounds
+2. Tell the user: "The hatchery GitHub App does not have access to this repository. Please add the repository to the GitHub App installation permissions."
+3. The user needs to update the repository access scope in the GitHub App settings at https://github.com/settings/installations
+
+This applies especially when you can access some repos but not others — it means the token works, but the GitHub App installation is not authorized for that specific repository.
+CLAUDEMD
+chown -R 1000:1000 "$CLAUDE_DIR"
+
+# Set CLAUDE_CONFIG_DIR for all sessions
+echo 'export CLAUDE_CONFIG_DIR=/workspaces/.claude' > /etc/profile.d/claude-config.sh
+
 # --- git credential helper (GitHub) ---
 cat > /usr/local/bin/git-credential-hatchery <<'CRED'
 #!/bin/sh
