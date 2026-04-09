@@ -15,6 +15,7 @@ import {
   startDrone,
   removeDrone,
   readRepos,
+  execInDrone,
 } from "./docker.ts";
 import { spawn } from "./spawn.ts";
 import { msg, status, HatcheryError } from "./zerg.ts";
@@ -102,6 +103,7 @@ program
   .argument("<org/repo>", "GitHub repository")
   .description("Start a stopped drone (emerge from the ground)")
   .action(async (repo: string) => {
+    const config = loadConfig();
     const docker = createClient();
     const name = resolveDroneName(repo);
     const d = await findDrone(docker, name);
@@ -110,6 +112,24 @@ program
       process.exit(1);
     }
     await startDrone(docker, d.id);
+
+    // Re-authenticate tailscale — env vars from initial `devcontainer up` are
+    // not persisted in the container config, so after a host reboot the drone
+    // loses its tailnet membership and `docker start` alone can't restore it.
+    if (config.headscaleAuthKey && config.tailscaleDomain) {
+      const loginServer = `https://${config.tailscaleDomain}`;
+      const result = await execInDrone(docker, d.id, [
+        "sudo", "tailscale", "up",
+        "--reset",
+        `--login-server=${loginServer}`,
+        `--authkey=${config.headscaleAuthKey}`,
+        `--hostname=${name}`,
+      ]);
+      if (result.exitCode !== 0) {
+        console.error(`Tailscale re-auth failed: ${result.output.trim()}`);
+      }
+    }
+
     console.log(msg.unburrowComplete);
   });
 

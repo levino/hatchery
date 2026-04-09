@@ -90,6 +90,32 @@ export async function startDrone(
   await docker.getContainer(id).start();
 }
 
+/** Run a command in a running container and return exit code + output. */
+export async function execInDrone(
+  docker: Docker,
+  id: string,
+  cmd: string[],
+): Promise<{ exitCode: number; output: string }> {
+  const container = docker.getContainer(id);
+  const exec = await container.exec({
+    Cmd: cmd,
+    AttachStdout: true,
+    AttachStderr: true,
+  });
+  const stream = await exec.start({ hijack: true, stdin: false });
+  const chunks: Buffer[] = [];
+  await new Promise<void>((resolve, reject) => {
+    stream.on("data", (chunk: Buffer) => chunks.push(chunk));
+    stream.on("end", () => resolve());
+    stream.on("error", reject);
+  });
+  const info = await exec.inspect();
+  return {
+    exitCode: info.ExitCode ?? -1,
+    output: Buffer.concat(chunks).toString("utf-8"),
+  };
+}
+
 export async function removeDrone(
   docker: Docker,
   id: string,
