@@ -32,9 +32,14 @@ export class SocketManager {
     } catch {}
 
     const server = createServer(async (req, res) => {
-      if (req.url === "/token") {
+      const url = new URL(req.url ?? "/", "http://localhost");
+      if (url.pathname === "/token") {
         try {
-          const token = await this.tokenProvider.getToken(repos);
+          const repoParam = url.searchParams.get("repo");
+          const orgParam = url.searchParams.get("org");
+          const targetRepos = repoParam ? [repoParam] : repos;
+          const orgOverride = orgParam ?? undefined;
+          const token = await this.tokenProvider.getToken(targetRepos, orgOverride);
           res.writeHead(200, { "Content-Type": "text/plain" });
           res.end(token);
         } catch (err) {

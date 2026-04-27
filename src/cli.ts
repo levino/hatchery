@@ -117,7 +117,9 @@ program
     // not persisted in the container config, so after a host reboot the drone
     // loses its tailnet membership and `docker start` alone can't restore it.
     if (config.headscaleAuthKey && config.tailscaleDomain) {
-      const loginServer = `https://${config.tailscaleDomain}`;
+      const loginServer = config.tailscaleDomain.startsWith("http")
+        ? config.tailscaleDomain
+        : `https://${config.tailscaleDomain}`;
       const result = await execInDrone(docker, d.id, [
         "sudo", "tailscale", "up",
         "--reset",
@@ -132,6 +134,35 @@ program
 
     console.log(msg.unburrowComplete);
   });
+
+program
+  .command("reauth")
+  .description("Re-authenticate Tailscale in all running drones (use after a Tailscale outage)")
+  .action(async () => {
+    const config = loadConfig();
+    if (!config.headscaleAuthKey || !config.tailscaleDomain) {
+      console.error("Tailscale not configured.");
+      process.exit(1);
+    }
+    const docker = createClient();
+    const drones = await listDrones(docker);
+    const running = drones.filter((d) => d.state === "running");
+    const loginServer = config.tailscaleDomain.startsWith("http")
+      ? config.tailscaleDomain
+      : `https://${config.tailscaleDomain}`;
+    for (const d of running) {
+      process.stdout.write(`Re-authing ${d.name}... `);
+      const result = await execInDrone(docker, d.id, [
+        "tailscale", "up",
+        "--reset",
+        `--login-server=${loginServer}`,
+        `--authkey=${config.headscaleAuthKey}`,
+        `--hostname=${d.name}`,
+      ]);
+      console.log(result.exitCode === 0 ? "✓" : `✗ ${result.output.trim()}`);
+    }
+  });
+
 
 program
   .command("slay")

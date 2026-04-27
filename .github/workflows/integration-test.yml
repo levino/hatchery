@@ -1,0 +1,54 @@
+name: Integration Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "features/hatchery/**"
+      - "src/spawn.ts"
+      - "src/cli.ts"
+      - "src/docker.ts"
+      - "tests/**"
+  pull_request:
+    paths:
+      - "features/hatchery/**"
+      - "src/spawn.ts"
+      - "src/cli.ts"
+      - "src/docker.ts"
+      - "tests/**"
+  workflow_dispatch:
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Pull Headscale image
+        run: docker pull headscale/headscale:0.23.0-alpha12
+
+      - name: Enable TUN device (needed for Tailscale in containers)
+        run: |
+          sudo modprobe tun || true
+          ls /dev/net/tun && echo "TUN available"
+
+      - name: Run integration tests
+        env:
+          # Minimal GitHub config — tests use local repo, no GitHub App needed
+          HATCHERY_GITHUB_CLIENT_ID: "test"
+          HATCHERY_GITHUB_APP_KEY: "test"
+          HATCHERY_GITHUB_USER: ""
+          HATCHERY_DOTFILES_REPO: ""
+          # Tailscale will be overridden by the test script to point at local Headscale
+          HATCHERY_HEADSCALE_AUTH_KEY: "placeholder"
+          HATCHERY_TAILSCALE_DOMAIN: "localhost:8085"
+        run: bash tests/integration.sh

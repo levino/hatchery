@@ -15,18 +15,22 @@ export class TokenProvider {
     this.config = config;
   }
 
-  async getToken(repos: string[]): Promise<string> {
-    const key = cacheKey(repos);
+  async getToken(repos: string[], orgOverride?: string): Promise<string> {
+    const key = orgOverride ? `org:${orgOverride}` : cacheKey(repos);
 
     const cached = this.cache.get(key);
     if (cached && cached.expiresAt.getTime() - Date.now() > 5 * 60 * 1000) {
       return cached.token;
     }
 
-    const instId = installationId(this.config, repos[0]);
+    const instId = orgOverride
+      ? installationId(this.config, `${orgOverride}/`)
+      : installationId(this.config, repos[0]);
+    // When org-only token requested, don't scope to specific repos
+    const scopedRepos = orgOverride ? [] : repos;
     const { token, expiresAt } = await this.createInstallationToken(
       instId,
-      repos,
+      scopedRepos,
     );
 
     this.cache.set(key, { token, expiresAt });
@@ -61,9 +65,11 @@ export class TokenProvider {
           Accept: "application/vnd.github+json",
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          repositories: repos.map((r) => r.split("/")[1]),
-        }),
+        body: JSON.stringify(
+          repos.length > 0
+            ? { repositories: repos.map((r) => r.split("/")[1]) }
+            : {},
+        ),
       },
     );
 

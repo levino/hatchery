@@ -23,6 +23,27 @@ You are running inside a Hatchery drone — a devcontainer managed by Hatchery.
 - NEVER modify git credential helper configuration (`git config credential.*`)
 - NEVER store tokens in environment variables or files
 
+## Multi-org access
+
+This drone can access repos from **multiple GitHub orgs**. Credentials are routed automatically per org.
+
+### gh CLI
+
+The `gh` wrapper detects the target org automatically:
+
+- From the `--repo` / `-R` flag: `gh pr list --repo cdu-suedniedersachsen/my-repo`
+- From the `git remote` of your current directory (if you're inside a repo)
+
+You do NOT need to set `GH_TOKEN` manually. Just use `gh` normally with `--repo org/repo`.
+
+### git clone / push / pull
+
+Works automatically — the credential helper reads which repo git is accessing and fetches the right token for that org.
+
+### Rule: never set GH_TOKEN manually
+
+Do NOT set `GH_TOKEN` in the environment or in scripts. The wrapper handles it. If you hardcode a token it will break other orgs.
+
 ## When git authentication fails
 
 If you get a permission error accessing a repository:
@@ -36,14 +57,24 @@ CLAUDEMD
 chown -R 1000:1000 "$CLAUDE_DIR"
 
 # Set CLAUDE_CONFIG_DIR for all sessions
-echo 'export CLAUDE_CONFIG_DIR=/workspaces/.claude' > /etc/profile.d/claude-config.sh
+echo 'export CLAUDE_CONFIG_DIR=/workspaces/worktrees/.claude' > /etc/profile.d/claude-config.sh
 
 # --- git credential helper (GitHub) ---
 cat > /usr/local/bin/git-credential-hatchery <<'CRED'
 #!/bin/sh
 case "$1" in
   get)
-    T=$(curl -sf --unix-socket /var/run/hatchery-sockets/creds.sock http://localhost/token)
+    REPO=""
+    while IFS= read -r line && [ -n "$line" ]; do
+      case "$line" in
+        path=*) REPO="${line#path=}"; REPO="${REPO%.git}" ;;
+      esac
+    done
+    if [ -n "$REPO" ]; then
+      T=$(curl -sf --unix-socket /var/run/hatchery-sockets/creds.sock "http://localhost/token?repo=${REPO}")
+    else
+      T=$(curl -sf --unix-socket /var/run/hatchery-sockets/creds.sock http://localhost/token)
+    fi
     [ -z "$T" ] && exit 1
     echo "protocol=https"
     echo "host=github.com"
@@ -81,7 +112,32 @@ if command -v gh >/dev/null 2>&1; then
   cp "$GH_REAL" /usr/bin/gh-real
   cat > /usr/local/bin/gh <<'GH'
 #!/bin/sh
-export GH_TOKEN=$(curl -s --unix-socket /var/run/hatchery-sockets/creds.sock http://localhost/token)
+# Detect target org from --repo/-R flag or git remote
+ORG=""
+PREV=""
+for arg in "$@"; do
+  case "$PREV" in
+    --repo|-R)
+      ORG="${arg%%/*}"
+      ;;
+  esac
+  PREV="$arg"
+done
+if [ -z "$ORG" ]; then
+  REMOTE=$(git remote get-url origin 2>/dev/null)
+  case "$REMOTE" in
+    https://github.com/*)
+      REPO_PATH="${REMOTE#https://github.com/}"
+      ORG="${REPO_PATH%%/*}"
+      ;;
+  esac
+fi
+if [ -n "$ORG" ]; then
+  GH_TOKEN=$(curl -s --unix-socket /var/run/hatchery-sockets/creds.sock "http://localhost/token?org=${ORG}")
+else
+  GH_TOKEN=$(curl -s --unix-socket /var/run/hatchery-sockets/creds.sock http://localhost/token)
+fi
+export GH_TOKEN
 exec /usr/bin/gh-real "$@"
 GH
   chmod +x /usr/local/bin/gh
@@ -114,18 +170,16 @@ echo 'export LANG=en_US.UTF-8' >> /etc/profile.d/locale.sh
 # --- postStartCommand entrypoint ---
 cat > /usr/local/bin/hatchery-post-start <<'POST'
 #!/bin/sh
-set -e
+# Note: no set -e — individual steps log errors but never abort the drone setup.
 
-# Persist SSH host keys across rebuilds (volume: /var/lib/hatchery/host-keys)
-HOST_KEY_DIR="/var/lib/hatchery/host-keys"
-if ls "$HOST_KEY_DIR"/ssh_host_* >/dev/null 2>&1; then
-  sudo cp "$HOST_KEY_DIR"/ssh_host_* /etc/ssh/
-  sudo chmod 600 /etc/ssh/ssh_host_*_key
-  sudo chmod 644 /etc/ssh/ssh_host_*_key.pub
-  # Restart sshd so it picks up the restored keys (it already started via entrypoint)
+# Install global SSH host key (shared across all drones, never changes)
+GLOBAL_HOST_KEY="/var/run/hatchery-host-key"
+if [ -f "$GLOBAL_HOST_KEY" ]; then
+  sudo cp "$GLOBAL_HOST_KEY" /etc/ssh/ssh_host_ed25519_key || true
+  sudo ssh-keygen -y -f "$GLOBAL_HOST_KEY" | sudo tee /etc/ssh/ssh_host_ed25519_key.pub > /dev/null || true
+  sudo chmod 600 /etc/ssh/ssh_host_ed25519_key || true
+  sudo chmod 644 /etc/ssh/ssh_host_ed25519_key.pub || true
   sudo pkill -HUP sshd || true
-else
-  sudo cp /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub "$HOST_KEY_DIR/"
 fi
 
 # SSH keys from GitHub
@@ -133,17 +187,40 @@ if [ -n "$HATCHERY_GITHUB_USER" ]; then
   USER_HOME=$(getent passwd 1000 | cut -d: -f6)
   mkdir -p "$USER_HOME/.ssh"
   chmod 700 "$USER_HOME/.ssh"
-  curl -fsSL "https://github.com/${HATCHERY_GITHUB_USER}.keys" >> "$USER_HOME/.ssh/authorized_keys"
-  chmod 600 "$USER_HOME/.ssh/authorized_keys"
-  chown -R 1000:1000 "$USER_HOME/.ssh"
+  curl -fsSL "https://github.com/${HATCHERY_GITHUB_USER}.keys" >> "$USER_HOME/.ssh/authorized_keys" || true
+  chmod 600 "$USER_HOME/.ssh/authorized_keys" || true
+  chown -R 1000:1000 "$USER_HOME/.ssh" || true
 fi
 
 # Tailscale / Headscale join
+# We persist the machine state in the socket dir so that after slay+respawn
+# Headscale sees the same machine key and keeps the hostname (no random suffix).
 if [ -n "$HATCHERY_TS_AUTH_KEY" ]; then
+  TAILSCALE_CACHE="/var/run/hatchery-sockets/.tailscale"
+
+  if [ -d "$TAILSCALE_CACHE" ] && [ "$(ls -A "$TAILSCALE_CACHE" 2>/dev/null)" ]; then
+    # Restore persisted state: stop daemon, replace state, restart daemon
+    sudo pkill tailscaled 2>/dev/null || true
+    sleep 1
+    sudo cp -a "$TAILSCALE_CACHE/." /var/lib/tailscale/
+    sudo chown -R root:root /var/lib/tailscale/
+    sudo mkdir -p /var/run/tailscale
+    nohup sudo tailscaled \
+      --state=/var/lib/tailscale/tailscaled.state \
+      --socket=/var/run/tailscale/tailscaled.sock \
+      >/tmp/tailscaled.log 2>&1 &
+    sleep 2
+  fi
+
   sudo tailscale up \
     --login-server="$HATCHERY_TS_LOGIN_SERVER" \
     --authkey="$HATCHERY_TS_AUTH_KEY" \
-    --hostname="$HATCHERY_TS_HOSTNAME"
+    --hostname="$HATCHERY_TS_HOSTNAME" || echo "WARNING: tailscale up failed — drone may not be reachable via Tailscale"
+
+  # Persist state for next spawn (socket dir is bind-mounted from host, survives slay)
+  mkdir -p "$TAILSCALE_CACHE" || true
+  sudo cp -a /var/lib/tailscale/. "$TAILSCALE_CACHE/" || true
+  sudo chown -R 1000:1000 "$TAILSCALE_CACHE/" || true
 fi
 
 # --- Forgejo provider setup ---

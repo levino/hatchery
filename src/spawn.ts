@@ -1,5 +1,5 @@
 import { execFileSync, spawn as spawnChild } from "node:child_process";
-import { mkdirSync, existsSync, readFileSync } from "node:fs";
+import { mkdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve, basename } from "node:path";
 import { homedir } from "node:os";
 import Docker from "dockerode";
@@ -128,6 +128,13 @@ export async function spawn(docker: Docker, repoArg: string, config: Config, ext
   const droneSocketDir = join(config.socketDir, name);
   mkdirSync(droneSocketDir, { recursive: true });
 
+  // Ensure global SSH host key exists (shared across all drones)
+  const hatcheryDir = join(homedir(), ".hatchery");
+  const globalHostKey = join(hatcheryDir, "drone_ssh_host_key");
+  if (!existsSync(globalHostKey)) {
+    execFileSync("ssh-keygen", ["-t", "ed25519", "-f", globalHostKey, "-N", "", "-C", "hatchery-drone-host-key"]);
+  }
+
   console.log(msg.spawnStarting);
 
   const workspaceDir = join(HATCHERY_DIR, name, "worktrees");
@@ -198,7 +205,10 @@ export async function spawn(docker: Docker, repoArg: string, config: Config, ext
     remoteEnvs.push(["HATCHERY_TS_AUTH_KEY", config.headscaleAuthKey]);
   }
   if (config.tailscaleDomain) {
-    remoteEnvs.push(["HATCHERY_TS_LOGIN_SERVER", `https://${config.tailscaleDomain}`]);
+    const loginServer = config.tailscaleDomain.startsWith("http")
+      ? config.tailscaleDomain
+      : `https://${config.tailscaleDomain}`;
+    remoteEnvs.push(["HATCHERY_TS_LOGIN_SERVER", loginServer]);
   }
   remoteEnvs.push(["HATCHERY_TS_HOSTNAME", tsHostname ?? name]);
   remoteEnvs.push(["CLAUDE_CONFIG_DIR", "/workspaces/worktrees/.claude"]);
@@ -217,10 +227,20 @@ export async function spawn(docker: Docker, repoArg: string, config: Config, ext
     remoteEnvs.push(["HATCHERY_FORGEJO_FAKE_TOKEN", fakeToken]);
   }
 
+  // Write CLAUDE.md to persistent worktrees mount so Claude Code finds it in every drone
+  const claudeConfigDir = join(workspaceDir, ".claude");
+  mkdirSync(claudeConfigDir, { recursive: true });
+  const claudeMdPath = join(claudeConfigDir, "CLAUDE.md");
+  if (!existsSync(claudeMdPath)) {
+    const org = parsed.provider === "github" ? parsed.repo.split("/")[0] : null;
+    const orgLine = org ? `Default org for this drone: \`${org}\`.\n` : "";
+    writeFileSync(claudeMdPath, `# Hatchery Drone — Credential System\n\n## GitHub credentials — how it works\n\nYou are inside a Hatchery drone. GitHub access works via a Unix socket at \`/var/run/hatchery-sockets/creds.sock\`. Credentials are automatic — you do NOT need to log in or set tokens manually.\n\n## git (clone, push, pull)\n\nJust works. The credential helper fetches the right token automatically. Do nothing.\n\n## gh CLI\n\nThe \`gh\` wrapper at \`/usr/local/bin/gh\` fetches a token automatically based on the target org. Use it normally:\n\n\`\`\`sh\ngh pr list --repo org/repo\ngh api repos/org/repo\n\`\`\`\n\n${orgLine}The wrapper detects the org from \`--repo\`/\`-R\` or from \`git remote origin\` in the current directory.\n\n## If gh returns no output or fails silently\n\nThe wrapper may be broken. Fetch the token manually:\n\n\`\`\`sh\nTOKEN=\\$(curl -s --unix-socket /var/run/hatchery-sockets/creds.sock "http://localhost/token?org=<org>")\ncurl -s -H "Authorization: token \\$TOKEN" https://api.github.com/repos/org/repo\n\`\`\`\n\nOr call the real binary directly:\n\`\`\`sh\nGH_TOKEN=\\$(curl -s --unix-socket /var/run/hatchery-sockets/creds.sock "http://localhost/token?org=<org>") /usr/bin/gh-real <command>\n\`\`\`\n\n## NEVER do these\n\n- \`gh auth login\`\n- \`export GH_TOKEN=...\` with a hardcoded value\n- Storing tokens anywhere\n\n## 403 "Resource not accessible by integration"\n\nThe GitHub App lacks permission for this operation (e.g. creating repos). Tell the user — do not work around it.\n`);
+  }
+
   const allRepos = parsed.provider === "forgejo"
     ? `${parsed.host}/${parsed.repo}`
     : [parsed.repo, ...extraRepos].join(",");
-  await devcontainerUp(docker, repoDir, workspaceDir, devcontainerConfig, name, allRepos, config, remoteEnvs);
+  await devcontainerUp(docker, repoDir, workspaceDir, devcontainerConfig, name, allRepos, config, remoteEnvs, globalHostKey);
 
   // Run lifecycle commands (postCreateCommand, postStartCommand, dotfiles, etc.)
   runUserCommands(repoDir, devcontainerConfig, name, remoteEnvs, config);
@@ -242,6 +262,7 @@ async function devcontainerUp(
   repo: string,
   config: Config,
   remoteEnvs: [string, string][],
+  globalHostKey: string,
 ): Promise<void> {
   const devcontainerBin = resolve("node_modules/.bin/devcontainer");
 
@@ -282,6 +303,8 @@ async function devcontainerUp(
     `type=bind,source=${worktreesDir},target=/workspaces/worktrees`,
     "--mount",
     `type=bind,source=${join(config.socketDir, name)},target=/var/run/hatchery-sockets`,
+    "--mount",
+    `type=bind,source=${globalHostKey},target=/var/run/hatchery-host-key`,
   ];
 
   const childEnv = { ...process.env };
