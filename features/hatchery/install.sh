@@ -218,9 +218,13 @@ if [ -n "$HATCHERY_TS_AUTH_KEY" ]; then
     --hostname="$HATCHERY_TS_HOSTNAME" || echo "WARNING: tailscale up failed — drone may not be reachable via Tailscale"
 
   # Tailscale's ts-input chain drops all inbound tailnet traffic (100.64.0.0/10) by default.
-  # Insert an ACCEPT rule before the DROP so peers can reach SSH on port 2222.
-  TS_SELF_IP=$(tailscale ip -4 2>/dev/null || true)
-  RULE_NUM=$(iptables -L ts-input -n --line-numbers 2>/dev/null | awk '/DROP.*100\.64\.0\.0\/10/{print $1; exit}')
+  # Poll until the chain appears (tailscaled adds it asynchronously after tailscale up).
+  # Then insert an ACCEPT rule before the DROP so peers can reach SSH on port 2222.
+  for _i in $(seq 1 15); do
+    RULE_NUM=$(iptables -L ts-input -n --line-numbers 2>/dev/null | awk '/DROP.*100\.64\.0\.0\/10/{print $1; exit}')
+    [ -n "$RULE_NUM" ] && break
+    sleep 1
+  done
   if [ -n "$RULE_NUM" ]; then
     iptables -I ts-input "$RULE_NUM" -p tcp --dport 2222 -s 100.64.0.0/10 -j ACCEPT 2>/dev/null || true
   fi

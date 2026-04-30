@@ -271,7 +271,7 @@ async function devcontainerUp(
   let hatcheryFeatureRef = "ghcr.io/levino/hatchery/hatchery:1";
   if (localFeatureDir) {
     localFeatureCleanup = installLocalFeature(localFeatureDir, repoDir);
-    hatcheryFeatureRef = "./hatchery";
+    hatcheryFeatureRef = "./.devcontainer/hatchery";
     console.log(`Using local feature: ${localFeatureDir}`);
   }
 
