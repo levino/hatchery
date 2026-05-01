@@ -67,7 +67,7 @@ case "$1" in
     REPO=""
     while IFS= read -r line && [ -n "$line" ]; do
       case "$line" in
-        path=*) REPO="${line#path=}"; REPO="${REPO%.git}" ;;
+        path=*) REPO="${line#path=}"; REPO="${REPO#/}"; REPO="${REPO%.git}" ;;
       esac
     done
     if [ -n "$REPO" ]; then
