@@ -192,6 +192,16 @@ if [ -n "$HATCHERY_GITHUB_USER" ]; then
   chown -R 1000:1000 "$USER_HOME/.ssh" || true
 fi
 
+# Ensure a fallback DNS is present so tailscale up can resolve the Headscale hostname
+# even when 100.100.100.100 (Tailscale MagicDNS) is the primary nameserver and offline.
+if grep -q "^nameserver 100.100.100.100" /etc/resolv.conf 2>/dev/null; then
+  if ! grep -q "^nameserver 1.1.1.1" /etc/resolv.conf 2>/dev/null; then
+    cp /etc/resolv.conf /tmp/resolv.conf.new
+    echo "nameserver 1.1.1.1" >> /tmp/resolv.conf.new
+    cp /tmp/resolv.conf.new /etc/resolv.conf || true
+  fi
+fi
+
 # Tailscale / Headscale join
 # We persist the machine state in the socket dir so that after slay+respawn
 # Headscale sees the same machine key and keeps the hostname (no random suffix).
