@@ -125,7 +125,7 @@ program
         "--reset",
         `--login-server=${loginServer}`,
         `--authkey=${config.headscaleAuthKey}`,
-        `--hostname=${name}`,
+        `--hostname=${name.replace(/\./g, "-")}`,
       ]);
       if (result.exitCode !== 0) {
         console.error(`Tailscale re-auth failed: ${result.output.trim()}`);
@@ -157,7 +157,7 @@ program
         "--reset",
         `--login-server=${loginServer}`,
         `--authkey=${config.headscaleAuthKey}`,
-        `--hostname=${d.name}`,
+        `--hostname=${d.name.replace(/\./g, "-")}`,
       ]);
       console.log(result.exitCode === 0 ? "✓" : `✗ ${result.output.trim()}`);
     }

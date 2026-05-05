@@ -210,7 +210,7 @@ export async function spawn(docker: Docker, repoArg: string, config: Config, ext
       : `https://${config.tailscaleDomain}`;
     remoteEnvs.push(["HATCHERY_TS_LOGIN_SERVER", loginServer]);
   }
-  remoteEnvs.push(["HATCHERY_TS_HOSTNAME", tsHostname ?? name]);
+  remoteEnvs.push(["HATCHERY_TS_HOSTNAME", (tsHostname ?? name).replace(/\./g, "-")]);
   remoteEnvs.push(["CLAUDE_CONFIG_DIR", "/workspaces/worktrees/.claude"]);
 
   // Forgejo-specific: write repo info so creds-service creates the proxy on container start
