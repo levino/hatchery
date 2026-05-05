@@ -243,7 +243,15 @@ export async function spawn(docker: Docker, repoArg: string, config: Config, ext
   await devcontainerUp(docker, repoDir, workspaceDir, devcontainerConfig, name, allRepos, config, remoteEnvs, globalHostKey);
 
   // Run lifecycle commands (postCreateCommand, postStartCommand, dotfiles, etc.)
-  runUserCommands(repoDir, devcontainerConfig, name, remoteEnvs, config);
+  // If the project's updateContentCommand fails, devcontainer skips postStartCommand entirely,
+  // so hatchery-post-start (Tailscale join, SSH keys) never runs. We catch that failure and
+  // run hatchery-post-start directly so infrastructure setup always completes.
+  try {
+    runUserCommands(repoDir, devcontainerConfig, name, remoteEnvs, config);
+  } catch {
+    console.log("Warning: run-user-commands failed — running hatchery-post-start directly");
+    await runPostStart(docker, name, remoteEnvs);
+  }
 
   const user = getRemoteUser(devcontainerConfig);
   const vscodeUri = `vscode://vscode-remote/ssh-remote+${name}/workspaces/worktrees/main`;
@@ -334,6 +342,23 @@ async function devcontainerUp(
   try { process.kill(-child.pid!, "SIGTERM"); } catch {}
   localFeatureCleanup?.();
   throw new HatcheryError(msg.spawnTimeout);
+}
+
+async function runPostStart(
+  docker: Docker,
+  name: string,
+  remoteEnvs: [string, string][],
+): Promise<void> {
+  const drone = await findDrone(docker, name);
+  if (!drone) return;
+  const envArgs = remoteEnvs.flatMap(([k, v]) => ["-e", `${k}=${v}`]);
+  try {
+    execFileSync("docker", ["exec", ...envArgs, drone.id, "/usr/local/bin/hatchery-post-start"], {
+      stdio: "inherit",
+    });
+  } catch {
+    console.log("Warning: hatchery-post-start failed");
+  }
 }
 
 function runUserCommands(
