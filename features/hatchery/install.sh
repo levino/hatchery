@@ -227,6 +227,12 @@ if [ -n "$HATCHERY_TS_AUTH_KEY" ]; then
     --authkey="$HATCHERY_TS_AUTH_KEY" \
     --hostname="$HATCHERY_TS_HOSTNAME" || echo "WARNING: tailscale up failed — drone may not be reachable via Tailscale"
 
+  # Re-apply DNS fallback: tailscale up rewrites /etc/resolv.conf with only
+  # 100.100.100.100, losing any prior fallback. Always ensure 1.1.1.1 is present.
+  if ! grep -q "^nameserver 1.1.1.1" /etc/resolv.conf 2>/dev/null; then
+    echo "nameserver 1.1.1.1" >> /etc/resolv.conf || true
+  fi
+
   # Tailscale's ts-input chain drops all inbound tailnet traffic (100.64.0.0/10) by default.
   # Poll until the chain appears (tailscaled adds it asynchronously after tailscale up).
   # Then insert an ACCEPT rule before the DROP so peers can reach SSH on port 2222.
