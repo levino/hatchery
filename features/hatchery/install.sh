@@ -58,6 +58,7 @@ chown -R 1000:1000 "$CLAUDE_DIR"
 
 # Set CLAUDE_CONFIG_DIR for all sessions
 echo 'export CLAUDE_CONFIG_DIR=/workspaces/worktrees/.claude' > /etc/profile.d/claude-config.sh
+echo CLAUDE_CONFIG_DIR=/workspaces/worktrees/.claude >> /etc/environment
 
 # --- git credential helper (GitHub) ---
 cat > /usr/local/bin/git-credential-hatchery <<'CRED'
