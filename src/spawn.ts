@@ -8,6 +8,7 @@ import {
   droneName,
   forgejoFroneName,
   writeRepoInfo,
+  ensureRestartPolicy,
   LABEL_MANAGED,
   LABEL_DRONE,
   LABEL_REPO,
@@ -332,6 +333,7 @@ async function devcontainerUp(
   while (Date.now() < deadline) {
     const drone = await findDrone(docker, name);
     if (drone && drone.state === "running") {
+      await ensureRestartPolicy(docker, drone.id);
       try { process.kill(-child.pid!, "SIGTERM"); } catch {}
       localFeatureCleanup?.();
       return;

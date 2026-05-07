@@ -87,7 +87,18 @@ export async function startDrone(
   docker: Docker,
   id: string,
 ): Promise<void> {
+  await ensureRestartPolicy(docker, id);
   await docker.getContainer(id).start();
+}
+
+/** Without this, drones don't come back after the host reboots. */
+export async function ensureRestartPolicy(
+  docker: Docker,
+  id: string,
+): Promise<void> {
+  await docker.getContainer(id).update({
+    RestartPolicy: { Name: "unless-stopped" },
+  });
 }
 
 /** Run a command in a running container and return exit code + output. */
