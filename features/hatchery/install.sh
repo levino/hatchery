@@ -86,6 +86,7 @@ esac
 CRED
 chmod +x /usr/local/bin/git-credential-hatchery
 git config --system credential.https://github.com.helper /usr/local/bin/git-credential-hatchery
+git config --system credential.https://github.com.useHttpPath true
 git config --system url."https://github.com/".insteadOf "git@github.com:"
 
 # --- git credential helper (Forgejo) ---
