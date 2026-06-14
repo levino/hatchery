@@ -1,62 +1,10 @@
 #!/bin/sh
 set -e
 
-# --- Claude Code config directory (persistent across rebuilds) ---
-CLAUDE_DIR="/workspaces/.claude"
-mkdir -p "$CLAUDE_DIR"
-cat > "$CLAUDE_DIR/CLAUDE.md" <<'CLAUDEMD'
-# Hatchery Dev Environment
-
-You are running inside a Hatchery drone — a devcontainer managed by Hatchery.
-
-## How credentials work
-
-- Git and GitHub credentials are provided automatically by the **hatchery credential helper**
-- The credential helper fetches short-lived tokens from a Unix socket at `/var/run/hatchery-sockets/creds.sock`
-- The `gh` CLI is wrapped to automatically use these tokens
-- Tokens are scoped to specific repositories via a GitHub App installation
-
-## Critical Rules
-
-- NEVER run `gh auth login`, `gh auth setup-git`, or any `gh auth` commands
-- NEVER hardcode tokens or credentials in `.git/config`, `.gitconfig`, or anywhere else
-- NEVER modify git credential helper configuration (`git config credential.*`)
-- NEVER store tokens in environment variables or files
-
-## Multi-org access
-
-This drone can access repos from **multiple GitHub orgs**. Credentials are routed automatically per org.
-
-### gh CLI
-
-The `gh` wrapper detects the target org automatically:
-
-- From the `--repo` / `-R` flag: `gh pr list --repo cdu-suedniedersachsen/my-repo`
-- From the `git remote` of your current directory (if you're inside a repo)
-
-You do NOT need to set `GH_TOKEN` manually. Just use `gh` normally with `--repo org/repo`.
-
-### git clone / push / pull
-
-Works automatically — the credential helper reads which repo git is accessing and fetches the right token for that org.
-
-### Rule: never set GH_TOKEN manually
-
-Do NOT set `GH_TOKEN` in the environment or in scripts. The wrapper handles it. If you hardcode a token it will break other orgs.
-
-## When git authentication fails
-
-If you get a permission error accessing a repository:
-
-1. Do NOT try to fix it yourself — no token hardcoding, no `gh auth`, no workarounds
-2. Tell the user: "The hatchery GitHub App does not have access to this repository. Please add the repository to the GitHub App installation permissions."
-3. The user needs to update the repository access scope in the GitHub App settings at https://github.com/settings/installations
-
-This applies especially when you can access some repos but not others — it means the token works, but the GitHub App installation is not authorized for that specific repository.
-CLAUDEMD
-chown -R 1000:1000 "$CLAUDE_DIR"
-
-# Set CLAUDE_CONFIG_DIR for all sessions
+# Set CLAUDE_CONFIG_DIR for all sessions. This points at the bind-mounted
+# worktrees dir so Claude Code's config (incl. its global CLAUDE.md) is
+# persistent across rebuilds. The fallback CLAUDE.md is written at runtime by
+# the postStartCommand below (build-time writes would be shadowed by the mount).
 echo 'export CLAUDE_CONFIG_DIR=/workspaces/worktrees/.claude' > /etc/profile.d/claude-config.sh
 echo CLAUDE_CONFIG_DIR=/workspaces/worktrees/.claude >> /etc/environment
 
@@ -169,6 +117,28 @@ sed -i 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && locale-gen 
 echo 'LANG=en_US.UTF-8' > /etc/default/locale
 echo 'export LANG=en_US.UTF-8' >> /etc/profile.d/locale.sh
 
+# --- developer tools: zellij (terminal multiplexer) + Claude Code ---
+# Installed system-wide so they're on PATH for every SSH/zellij session.
+# Failures are non-fatal (|| echo) so a release/registry hiccup never aborts the drone build.
+case "$(uname -m)" in
+  x86_64) ZJ_ARCH=x86_64 ;;
+  aarch64|arm64) ZJ_ARCH=aarch64 ;;
+  *) ZJ_ARCH="" ;;
+esac
+if [ -n "$ZJ_ARCH" ]; then
+  ( curl -fsSL -o /tmp/zellij.tgz "https://github.com/zellij-org/zellij/releases/latest/download/zellij-${ZJ_ARCH}-unknown-linux-musl.tar.gz" \
+    && tar -xzf /tmp/zellij.tgz -C /usr/local/bin zellij \
+    && chmod +x /usr/local/bin/zellij \
+    && rm -f /tmp/zellij.tgz ) || echo "WARNING: zellij install failed"
+fi
+if command -v npm >/dev/null 2>&1; then
+  npm install -g @anthropic-ai/claude-code || echo "WARNING: Claude Code install failed"
+fi
+
+# --- SSHD: disable password authentication ---
+echo "PasswordAuthentication no" >> /etc/ssh/sshd_config
+echo "KbdInteractiveAuthentication no" >> /etc/ssh/sshd_config
+
 # --- postStartCommand entrypoint ---
 cat > /usr/local/bin/hatchery-post-start <<'POST'
 #!/bin/sh
@@ -192,6 +162,52 @@ if [ -n "$HATCHERY_GITHUB_USER" ]; then
   curl -fsSL "https://github.com/${HATCHERY_GITHUB_USER}.keys" >> "$USER_HOME/.ssh/authorized_keys" || true
   chmod 600 "$USER_HOME/.ssh/authorized_keys" || true
   chown -R 1000:1000 "$USER_HOME/.ssh" || true
+fi
+
+# Fallback Claude Code instructions — written at runtime into $CLAUDE_CONFIG_DIR
+# (/workspaces/worktrees/.claude, bind-mounted → persistent). Only created if nothing
+# is there yet, so a dotfiles-provided CLAUDE.md always wins. (Build-time writes here
+# would be shadowed by the worktrees mount, which is why this lives in postStart.)
+CLAUDE_DIR="/workspaces/worktrees/.claude"
+if [ ! -f "$CLAUDE_DIR/CLAUDE.md" ]; then
+  mkdir -p "$CLAUDE_DIR"
+  cat > "$CLAUDE_DIR/CLAUDE.md" <<'CLAUDEMD'
+# Hatchery Dev Environment
+
+You are running inside a Hatchery drone — a devcontainer managed by Hatchery.
+
+## How credentials work
+
+- Git and GitHub credentials are provided automatically by the **hatchery credential helper**
+- The credential helper fetches short-lived tokens from a Unix socket at `/var/run/hatchery-sockets/creds.sock`
+- The `gh` CLI is wrapped to automatically use these tokens
+- Tokens are scoped to specific repositories via a GitHub App installation
+
+## Critical Rules
+
+- NEVER run `gh auth login`, `gh auth setup-git`, or any `gh auth` commands
+- NEVER hardcode tokens or credentials in `.git/config`, `.gitconfig`, or anywhere else
+- NEVER modify git credential helper configuration (`git config credential.*`)
+- NEVER store tokens in environment variables or files
+
+## Multi-org access
+
+This drone can access repos from **multiple GitHub orgs**. Credentials are routed automatically per org.
+
+The `gh` wrapper detects the target org from the `--repo`/`-R` flag or from the `git remote`
+of your current directory. Use `gh` normally with `--repo org/repo`; do NOT set `GH_TOKEN`
+manually (it would break other orgs). git clone/push/pull works automatically.
+
+## When git authentication fails
+
+1. Do NOT try to fix it yourself — no token hardcoding, no `gh auth`, no workarounds.
+2. Tell the user the hatchery GitHub App lacks access to this repo/org and must be granted it
+   (install/scope the app, add the org to config.json, restart the creds-service).
+
+This applies especially when you can access some repos but not others — the token works, but the
+GitHub App installation is not authorized for that specific repository.
+CLAUDEMD
+  chown -R 1000:1000 "$CLAUDE_DIR" 2>/dev/null || true
 fi
 
 # Ensure a fallback DNS is present so tailscale up can resolve the Headscale hostname

@@ -12,7 +12,7 @@ See [README.md](README.md) for full architecture docs.
 - **Language**: TypeScript (ESM, `"type": "module"`)
 
 ### Two Processes
-1. **`hatchery` CLI** (`src/cli.ts`) — user-facing commands: spawn, list, status, burrow, unburrow, slay
+1. **`hatchery` CLI** (`src/cli.ts`) — user-facing commands: spawn, list, status, burrow, unburrow, slay, reauth (re-auth Tailscale in all drones), repo connect/disconnect/list (multi-repo token access)
 2. **`hatchery-creds` service** (`src/creds-service.ts`) — persistent Docker Compose service that watches Docker events and creates per-drone Unix sockets for GitHub token delivery
 
 ### Spawn Flow (what happens when you run `hatchery spawn levino/nordstemmen-ai`)
@@ -43,15 +43,17 @@ See [README.md](README.md) for full architecture docs.
 | `src/creds-service.ts` | Persistent service: Docker event watcher, socket lifecycle |
 | `src/creds/token.ts` | GitHub App JWT creation, installation token API calls |
 | `src/creds/server.ts` | SocketManager: per-drone HTTP-over-Unix-socket servers |
-| `features/hatchery/install.sh` | Devcontainer feature: credential helpers, SSH keys, Tailscale |
+| `features/hatchery/install.sh` | Devcontainer feature: credential helpers, SSH keys, Tailscale, dev tools (zellij + Claude Code), fallback Claude `CLAUDE.md` |
 | `features/hatchery/devcontainer-feature.json` | Feature metadata, published to `ghcr.io/levino/hatchery/hatchery:1` |
 | `compose.yaml` | Docker Compose for persistent creds-service |
 | `Dockerfile` | creds-service container image |
 
 ### Configuration
 - **`.env`**: `HATCHERY_GITHUB_CLIENT_ID`, `HATCHERY_GITHUB_APP_KEY` (path or PEM), `HATCHERY_GITHUB_USER`, `HATCHERY_HEADSCALE_AUTH_KEY`, `HATCHERY_TAILSCALE_DOMAIN`
-- **`config.json`**: `{ "installations": { "org-name": "installation-id" } }` — maps GitHub org to App installation ID
+- **`config.json`**: `{ "installations": { "org-name": "installation-id" } }` — maps GitHub org to App installation ID. **Gitignored** (host-local state).
 - Optional: `HATCHERY_SOCKET_DIR`, `HATCHERY_DOTFILES_REPO`
+
+> **Adding a new org** (so a drone can access its repos): (1) install the `levino-drone` GitHub App on the org (https://github.com/apps/levino-drone/installations/new); (2) add `"<org>": "<installation-id>"` to `config.json`; (3) **restart the creds-service** — `docker restart hatchery-creds-1` — because `creds-service.ts` calls `loadConfig()` once at startup and won't see the new org otherwise (symptom in-drone: `git` fails with `could not read Username … No such device or address`). Per-drone repo-list changes from `repo connect` ARE picked up live; only the `installations` map needs the restart.
 
 ### Docker Labels (how drones are tracked)
 - `hatchery.managed=true` — identifies hatchery containers
@@ -65,6 +67,8 @@ See [README.md](README.md) for full architecture docs.
 4. **Drone already exists**: must `slay` first
 5. **Missing org in config.json**: `installationId()` throws if org not in installations map
 6. **creds-service not running**: sockets never created, git/gh fail in container
+7. **New org added but creds-service not restarted**: in-drone git fails with `could not read Username` even though the org is in `config.json` — restart `hatchery-creds-1` (see Configuration)
+8. **Drone SSH**: drones run sshd on port **2222** (password auth disabled); reach them via the Tailscale hostname `hatchery-<org>-<repo>`
 
 ### CLI Theme
 All user-facing messages use StarCraft Zerg theme (see `src/zerg.ts`). Drones = containers, spawn/slay/burrow/unburrow = start/remove/stop/restart.
