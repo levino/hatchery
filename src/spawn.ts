@@ -1,6 +1,6 @@
 import { execFileSync, spawn as spawnChild } from "node:child_process";
 import { mkdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve, basename } from "node:path";
+import { join, resolve, basename, dirname, relative } from "node:path";
 import { homedir } from "node:os";
 import Docker from "dockerode";
 import {
@@ -8,6 +8,7 @@ import {
   droneName,
   forgejoFroneName,
   writeRepoInfo,
+  writeRepos,
   ensureRestartPolicy,
   LABEL_MANAGED,
   LABEL_DRONE,
@@ -241,6 +242,9 @@ export async function spawn(docker: Docker, repoArg: string, config: Config, ext
   const allRepos = parsed.provider === "forgejo"
     ? `${parsed.host}/${parsed.repo}`
     : [parsed.repo, ...extraRepos].join(",");
+  if (parsed.provider === "github") {
+    writeRepos(config.socketDir, name, [parsed.repo, ...extraRepos]);
+  }
   await devcontainerUp(docker, repoDir, workspaceDir, devcontainerConfig, name, allRepos, config, remoteEnvs, globalHostKey);
 
   // Run lifecycle commands (postCreateCommand, postStartCommand, dotfiles, etc.)
@@ -280,7 +284,7 @@ async function devcontainerUp(
   let hatcheryFeatureRef = "ghcr.io/levino/hatchery/hatchery:1";
   if (localFeatureDir) {
     localFeatureCleanup = installLocalFeature(localFeatureDir, repoDir);
-    hatcheryFeatureRef = "./.devcontainer/hatchery";
+    hatcheryFeatureRef = "./" + relative(dirname(configPath), join(repoDir, ".devcontainer", "hatchery"));
     console.log(`Using local feature: ${localFeatureDir}`);
   }
 
