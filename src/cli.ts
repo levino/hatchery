@@ -137,21 +137,47 @@ program
 
 program
   .command("reauth")
-  .description("Re-authenticate Tailscale in all running drones (use after a Tailscale outage)")
-  .action(async () => {
+  .argument("[org/repo]", "Re-auth only this drone (default: all running drones)")
+  .description("Re-authenticate Tailscale in running drones (use after a Tailscale outage)")
+  .action(async (repo?: string) => {
     const config = loadConfig();
     if (!config.headscaleAuthKey || !config.tailscaleDomain) {
       console.error("Tailscale not configured.");
       process.exit(1);
     }
     const docker = createClient();
-    const drones = await listDrones(docker);
-    const running = drones.filter((d) => d.state === "running");
+
+    let targets;
+    if (repo) {
+      const name = resolveDroneName(repo);
+      const d = await findDrone(docker, name);
+      if (!d) {
+        console.error(msg.droneNotFound);
+        process.exit(1);
+      }
+      if (d.state !== "running") {
+        console.error(`Drone ${d.name} is not running (state: ${d.state}). Unburrow it first.`);
+        process.exit(1);
+      }
+      targets = [d];
+    } else {
+      const drones = await listDrones(docker);
+      targets = drones.filter((d) => d.state === "running");
+    }
+
     const loginServer = config.tailscaleDomain.startsWith("http")
       ? config.tailscaleDomain
       : `https://${config.tailscaleDomain}`;
-    for (const d of running) {
+    for (const d of targets) {
       process.stdout.write(`Re-authing ${d.name}... `);
+      // `tailscale down` first to fully tear down the wgengine + magicsock/DERP
+      // connections. A bare `tailscale up` reconfigures prefs but can leave stale
+      // DERP state wedged: the host still reaches the drone LAN-direct, but remote
+      // peers can't establish a disco/WireGuard session over DERP, so SSH from off
+      // the LAN times out during banner exchange. Tearing down and back up rebuilds
+      // that state in-process — same effect as restarting tailscaled, without the
+      // sledgehammer of `docker restart` (which would kill the drone's dev session).
+      await execInDrone(docker, d.id, ["tailscale", "down"]); // best-effort
       const result = await execInDrone(docker, d.id, [
         "tailscale", "up",
         "--reset",
