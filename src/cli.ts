@@ -18,6 +18,7 @@ import {
   execInDrone,
 } from "./docker.ts";
 import { spawn } from "./spawn.ts";
+import { defaultSocketDir, hasWork, listOrphans, removePath, reposDir } from "./gc.ts";
 import { msg, status, HatcheryError } from "./zerg.ts";
 
 /** Resolve a CLI argument to the drone name, handling local paths, org/repo, and host/org/repo. */
@@ -204,6 +205,54 @@ program
     }
     await removeDrone(docker, d.id);
     console.log(msg.slayComplete);
+    console.log(`  Worktrees kept at ${join(reposDir, name)} — 'hatchery gc' reclaims them.`);
+  });
+
+program
+  .command("gc")
+  .option("--force", "actually delete (default: report only)")
+  .option("--include-dirty", "also delete orphans holding uncommitted or unpushed work")
+  .description("Reclaim host state left behind by slain drones")
+  .action(async (opts: { force?: boolean; includeDirty?: boolean }) => {
+    const docker = createClient();
+    const orphans = await listOrphans(docker, defaultSocketDir());
+
+    if (orphans.length === 0) {
+      console.log(msg.gcNothing);
+      return;
+    }
+
+    const skipped = opts.includeDirty ? [] : orphans.filter(hasWork);
+    const targets = orphans.filter((o) => !skipped.includes(o));
+
+    for (const o of orphans) {
+      const notes = [`${o.worktrees} worktrees`];
+      if (o.dirty.length > 0) notes.push(`dirty: ${o.dirty.join(", ")}`);
+      if (o.unpushed.length > 0) notes.push(`unpushed: ${o.unpushed.join(", ")}`);
+      const mark = skipped.includes(o) ? "skip" : opts.force ? "DELETE" : "would delete";
+      console.log(`  [${mark}] ${o.name} (${notes.join("; ")})`);
+    }
+
+    if (skipped.length > 0) {
+      console.log(`\n  ${skipped.length} orphan(s) hold work — left alone. --include-dirty overrides.`);
+    }
+
+    if (!opts.force) {
+      console.log(`\n  ${targets.length} orphan(s) reclaimable. Re-run with --force.`);
+      return;
+    }
+
+    let failed = 0;
+    for (const o of targets) {
+      for (const p of o.paths) {
+        const res = removePath(p);
+        if (!res.ok) {
+          failed++;
+          console.error(`  ✗ ${res.error}`);
+        }
+      }
+    }
+    console.log(failed === 0 ? `\n  ${msg.gcComplete}` : `\n  Reclaimed with ${failed} failure(s).`);
   });
 
 // --- repo subcommands for multi-repo access ---

@@ -39,6 +39,8 @@ export const msg = {
   repoCannotRemovePrimary: "Cannot disconnect the primary genome — the drone would lose its identity.",
   proxyCreated: "Nydus worm online.",
   proxyRemoved: "Nydus worm collapsed.",
+  gcNothing: "No creep left to reclaim. The hive is clean.",
+  gcComplete: "Creep reclaimed. The hive breathes again.",
 };
 
 export function status(name: string, state: string): string {
