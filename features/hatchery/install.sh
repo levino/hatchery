@@ -132,7 +132,17 @@ if [ -n "$ZJ_ARCH" ]; then
     && rm -f /tmp/zellij.tgz ) || echo "WARNING: zellij install failed"
 fi
 if command -v npm >/dev/null 2>&1; then
-  npm install -g @anthropic-ai/claude-code || echo "WARNING: Claude Code install failed"
+  if npm install -g @anthropic-ai/claude-code; then
+    # npm's global prefix is /usr/local/share/npm-global, which only reaches PATH
+    # via /etc/profile.d — and Debian's /etc/zsh/zprofile never sources that. The
+    # drones run zsh, so link the binary where every shell type already looks.
+    CLAUDE_BIN="$(npm prefix -g)/bin/claude"
+    [ -x "$CLAUDE_BIN" ] && ln -sf "$CLAUDE_BIN" /usr/local/bin/claude
+  else
+    echo "WARNING: Claude Code install failed"
+  fi
+else
+  echo "WARNING: no npm in this image — Claude Code not installed"
 fi
 
 # --- SSHD: disable password authentication ---

@@ -1,10 +1,11 @@
 {
   "id": "hatchery",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "name": "Hatchery Drone Setup",
   "description": "SSH keys, Tailscale join, git/gh credential helpers",
   "installsAfter": [
-    "ghcr.io/devcontainers/features/github-cli"
+    "ghcr.io/devcontainers/features/github-cli",
+    "ghcr.io/devcontainers/features/node"
   ],
   "postStartCommand": "/usr/local/bin/hatchery-post-start",
   "mounts": [
