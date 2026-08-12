@@ -33,6 +33,57 @@ function installLocalFeature(featureDir: string, repoDir: string): () => void {
   return () => { try { execFileSync("rm", ["-rf", destDir]); } catch {} };
 }
 
+/** Host device handed to every drone when the host has it. */
+const KVM_DEVICE = "/dev/kvm";
+
+/**
+ * The devcontainer CLI has no --device flag, so KVM passthrough has to travel
+ * through the config's runArgs. Write a copy with the device appended and return
+ * its path. The CLI only accepts a config literally named devcontainer.json, so
+ * the copy goes into its own subdirectory — which means any path the config
+ * resolves relative to itself (Dockerfile, build context) has to be absolutized.
+ */
+function installKvmConfig(configPath: string): { path: string; cleanup?: () => void } {
+  if (!existsSync(KVM_DEVICE)) return { path: configPath };
+
+  let parsed: Record<string, unknown>;
+  try {
+    const raw = readFileSync(configPath, "utf-8");
+    parsed = JSON.parse(raw.replace(/^\s*\/\/.*$/gm, ""));
+  } catch {
+    console.log(`Warning: could not parse ${basename(configPath)} — spawning without ${KVM_DEVICE}`);
+    return { path: configPath };
+  }
+
+  // Compose-based devcontainers ignore runArgs; the device belongs in the compose file.
+  if (parsed.dockerComposeFile) {
+    console.log(`Warning: compose-based devcontainer — add ${KVM_DEVICE} to the compose file to get KVM`);
+    return { path: configPath };
+  }
+
+  const runArgs = Array.isArray(parsed.runArgs) ? (parsed.runArgs as string[]) : [];
+  if (runArgs.some((arg) => arg.includes(KVM_DEVICE))) return { path: configPath };
+  parsed.runArgs = [...runArgs, `--device=${KVM_DEVICE}`];
+
+  // The copy sits one directory deeper than the original, so self-relative paths
+  // would break. Pin them to where the original config resolved them.
+  const origDir = dirname(configPath);
+  const build = parsed.build as Record<string, unknown> | undefined;
+  if (build?.dockerfile) build.dockerfile = resolve(origDir, build.dockerfile as string);
+  if (build?.context) build.context = resolve(origDir, build.context as string);
+  if (parsed.dockerFile) parsed.dockerFile = resolve(origDir, parsed.dockerFile as string);
+  if (parsed.context) parsed.context = resolve(origDir, parsed.context as string);
+
+  const kvmDir = join(origDir, "hatchery-kvm");
+  mkdirSync(kvmDir, { recursive: true });
+  const kvmPath = join(kvmDir, "devcontainer.json");
+  writeFileSync(kvmPath, JSON.stringify(parsed, null, 2));
+  return {
+    path: kvmPath,
+    cleanup: () => { try { execFileSync("rm", ["-rf", kvmDir]); } catch {} },
+  };
+}
+
 /** Known locations for devcontainer.json, checked in order. */
 const DEVCONTAINER_CONFIG_PATHS = [
   ".devcontainer/devcontainer.json",
@@ -279,6 +330,9 @@ async function devcontainerUp(
 ): Promise<void> {
   const devcontainerBin = resolve("node_modules/.bin/devcontainer");
 
+  const kvm = installKvmConfig(configPath);
+  configPath = kvm.path;
+
   const localFeatureDir = process.env.HATCHERY_LOCAL_FEATURE;
   let localFeatureCleanup: (() => void) | undefined;
   let hatcheryFeatureRef = "ghcr.io/levino/hatchery/hatchery:1";
@@ -340,6 +394,7 @@ async function devcontainerUp(
       await ensureRestartPolicy(docker, drone.id);
       try { process.kill(-child.pid!, "SIGTERM"); } catch {}
       localFeatureCleanup?.();
+      kvm.cleanup?.();
       return;
     }
     await new Promise((r) => setTimeout(r, 2000));

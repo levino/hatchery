@@ -269,6 +269,27 @@ if [ -n "$HATCHERY_TS_AUTH_KEY" ]; then
   sudo chown -R 1000:1000 "$TAILSCALE_CACHE/" || true
 fi
 
+# --- KVM access ---
+# /dev/kvm is only present when the host had it and spawn.ts passed it through.
+# It is root:kvm 0660 on the host and the numeric gid differs per host, so
+# resolve it at runtime and put the container user into a group with that gid.
+if [ -e /dev/kvm ]; then
+  KVM_GID=$(stat -c %g /dev/kvm 2>/dev/null)
+  KVM_USER=$(getent passwd 1000 | cut -d: -f1)
+  if [ -n "$KVM_GID" ] && [ -n "$KVM_USER" ]; then
+    KVM_GROUP=$(getent group "$KVM_GID" | cut -d: -f1)
+    if [ -z "$KVM_GROUP" ]; then
+      # No group owns that gid yet; prefer the name "kvm" unless it is taken.
+      KVM_GROUP=kvm
+      getent group kvm >/dev/null 2>&1 && KVM_GROUP="kvm$KVM_GID"
+      sudo groupadd -g "$KVM_GID" "$KVM_GROUP" || true
+      KVM_GROUP=$(getent group "$KVM_GID" | cut -d: -f1)
+    fi
+    # usermod -aG is a no-op when the user is already a member.
+    [ -n "$KVM_GROUP" ] && sudo usermod -aG "$KVM_GROUP" "$KVM_USER" || true
+  fi
+fi
+
 # --- Forgejo provider setup ---
 if [ "$HATCHERY_PROVIDER" = "forgejo" ] && [ -n "$HATCHERY_FORGEJO_HOST" ]; then
   # Persist fake token to file so credential helper and tea wrapper can read it
