@@ -16,10 +16,20 @@ export interface Drone {
 }
 
 export interface RepoInfo {
+  /** Provider of the drone's own workspace repo. Decides which credential
+   *  mechanism the drone gets for `repos`. */
   provider: "github" | "forgejo";
   host?: string;       // forgejo hostname, absent for github
   repos: string[];
   fakeToken?: string;  // only for forgejo
+  /** Additional GitHub repos, independent of `provider`. A Forgejo drone with
+   *  entries here gets a GitHub token socket *alongside* its Forgejo proxy —
+   *  the two credential paths do not collide, because git routes by URL: the
+   *  helper for https://github.com hits creds.sock, the insteadOf rewrites send
+   *  Forgejo URLs to the proxy on localhost:9998. Both are already installed in
+   *  every drone; before this field the socket simply never existed and the
+   *  helper failed with "could not read Username". */
+  github?: string[];
 }
 
 export function droneName(repo: string): string {

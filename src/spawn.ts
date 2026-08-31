@@ -221,7 +221,7 @@ function getRemoteUser(configPath: string): string {
   return "root";
 }
 
-export async function spawn(docker: Docker, repoArg: string, config: Config, extraRepos: string[] = [], tsHostname?: string, kvm = false) {
+export async function spawn(docker: Docker, repoArg: string, config: Config, extraRepos: string[] = [], tsHostname?: string, kvm = false, githubRepos: string[] = []) {
   const parsed = parseRepoArg(repoArg, config);
   const name = parsed.name;
 
@@ -327,6 +327,9 @@ export async function spawn(docker: Docker, repoArg: string, config: Config, ext
       host: parsed.host!,
       repos: [parsed.repo, ...extraRepos],
       fakeToken,
+      // Optional GitHub-Repos daneben: der creds-service legt dafuer
+      // zusaetzlich einen Token-Socket an, der Proxy bleibt unberuehrt.
+      ...(githubRepos.length ? { github: githubRepos } : {}),
     });
     remoteEnvs.push(["HATCHERY_PROVIDER", "forgejo"]);
     remoteEnvs.push(["HATCHERY_FORGEJO_HOST", parsed.host!]);

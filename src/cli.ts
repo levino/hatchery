@@ -15,6 +15,7 @@ import {
   startDrone,
   removeDrone,
   readRepos,
+  readRepoInfo,
   execInDrone,
 } from "./docker.ts";
 import { spawn, normalizeRepoArg } from "./spawn.ts";
@@ -44,13 +45,15 @@ program
   .argument("<repo>", "Repository to spawn (org/repo for GitHub, host/org/repo for Forgejo)")
   .option("--repos <repos>", "Additional repos for token access (comma-separated org/repo)")
   .option("--kvm", "Pass /dev/kvm into the drone (Android emulators, VMs)")
+  .option("--github <repos>", "Additional GitHub repos for a Forgejo drone (comma-separated org/repo)")
   .option("--hostname <hostname>", "Override Tailscale hostname for the drone")
   .description("Spawn a new drone from a repository")
-  .action(async (repo: string, opts: { repos?: string; hostname?: string; kvm?: boolean }) => {
+  .action(async (repo: string, opts: { repos?: string; hostname?: string; kvm?: boolean; github?: string }) => {
     const config = loadConfig();
     const docker = createClient();
     const extraRepos = opts.repos ? opts.repos.split(",").map((r: string) => r.trim()) : [];
-    await spawn(docker, repo, config, extraRepos, opts.hostname, opts.kvm ?? false);
+    const githubRepos = opts.github ? opts.github.split(",").map((r: string) => r.trim()).filter(Boolean) : [];
+    await spawn(docker, repo, config, extraRepos, opts.hostname, opts.kvm ?? false, githubRepos);
   });
 
 program
@@ -260,9 +263,14 @@ program
 // --- repo subcommands for multi-repo access ---
 
 /** Send a POST to the creds-service management socket. */
-function managementRequest(socketDir: string, drone: string, repos: string[]): Promise<void> {
+function managementRequest(
+  socketDir: string,
+  drone: string,
+  list: string[],
+  target: "repos" | "github" = "repos",
+): Promise<void> {
   const socketPath = join(socketDir, "_management.sock");
-  const body = JSON.stringify({ drone, repos });
+  const body = JSON.stringify(target === "github" ? { drone, github: list } : { drone, repos: list });
   return new Promise((resolve, reject) => {
     const req = request({ socketPath, path: "/update", method: "POST" }, (res) => {
       let data = "";
@@ -303,8 +311,9 @@ repoCmd
   .command("connect")
   .argument("<org/repo>", "Drone identifier (org/repo or local path)")
   .argument("<extra-repo>", "Repository to add access for (org/repo)")
+  .option("--github", "Add a GitHub repo instead of one on the drone's own forge")
   .description("Grant a drone token access to an additional repo")
-  .action(async (repo: string, extraRepo: string) => {
+  .action(async (repo: string, extraRepo: string, opts: { github?: boolean }) => {
     const config = loadConfig();
     const docker = createClient();
     const name = resolveDroneName(repo);
@@ -313,13 +322,16 @@ repoCmd
       console.error(msg.droneNotFound);
       process.exit(1);
     }
-    const currentRepos = readRepos(config.socketDir, name) ?? drone.repo.split(",").map((r: string) => r.trim()).filter(Boolean);
-    if (currentRepos.includes(extraRepo)) {
+    const info = readRepoInfo(config.socketDir, name);
+    const target = opts.github ? "github" : "repos";
+    const current = opts.github
+      ? (info?.github ?? [])
+      : (readRepos(config.socketDir, name) ?? drone.repo.split(",").map((r: string) => r.trim()).filter(Boolean));
+    if (current.includes(extraRepo)) {
       console.log(msg.repoAlreadyConnected);
       return;
     }
-    const newRepos = [...currentRepos, extraRepo];
-    await managementRequest(config.socketDir, name, newRepos);
+    await managementRequest(config.socketDir, name, [...current, extraRepo], target);
     console.log(msg.repoConnected);
   });
 
@@ -327,8 +339,9 @@ repoCmd
   .command("disconnect")
   .argument("<org/repo>", "Drone identifier (org/repo or local path)")
   .argument("<extra-repo>", "Repository to remove access for (org/repo)")
+  .option("--github", "Remove a GitHub repo instead of one on the drone's own forge")
   .description("Revoke a drone's token access to a repo")
-  .action(async (repo: string, extraRepo: string) => {
+  .action(async (repo: string, extraRepo: string, opts: { github?: boolean }) => {
     const config = loadConfig();
     const docker = createClient();
     const name = resolveDroneName(repo);
@@ -337,17 +350,23 @@ repoCmd
       console.error(msg.droneNotFound);
       process.exit(1);
     }
-    const currentRepos = readRepos(config.socketDir, name) ?? drone.repo.split(",").map((r: string) => r.trim()).filter(Boolean);
-    if (!currentRepos.includes(extraRepo)) {
+    const info = readRepoInfo(config.socketDir, name);
+    const target = opts.github ? "github" : "repos";
+    const current = opts.github
+      ? (info?.github ?? [])
+      : (readRepos(config.socketDir, name) ?? drone.repo.split(",").map((r: string) => r.trim()).filter(Boolean));
+    if (!current.includes(extraRepo)) {
       console.log(msg.repoNotConnected);
       return;
     }
-    const newRepos = currentRepos.filter((r: string) => r !== extraRepo);
-    if (newRepos.length === 0) {
+    const next = current.filter((r: string) => r !== extraRepo);
+    // Die GitHub-Liste darf leer werden, die des eigenen Forge nicht -- dort
+    // steckt das Workspace-Repo drin.
+    if (!opts.github && next.length === 0) {
       console.error(msg.repoCannotRemovePrimary);
       process.exit(1);
     }
-    await managementRequest(config.socketDir, name, newRepos);
+    await managementRequest(config.socketDir, name, next, target);
     console.log(msg.repoDisconnected);
   });
 

@@ -32,6 +32,11 @@ async function recover() {
         if (forgejoHost) {
           pm.createProxy(d.name, info.repos, forgejoHost, info.fakeToken);
         }
+        // Zusaetzlich GitHub: der Drone-Container bringt den Credential-Helper
+        // laengst mit, ihm fehlte nur der Socket.
+        if (info.github?.length) {
+          sm.createSocket(d.name, info.github);
+        }
       } else {
         const repos = info?.repos ?? parseRepos(d.repo);
         sm.createSocket(d.name, repos);
@@ -65,6 +70,9 @@ async function watchEvents() {
         const forgejoHost = config.forgejo[info.host];
         if (forgejoHost) {
           pm.createProxy(droneName, info.repos, forgejoHost, info.fakeToken);
+        }
+        if (info.github?.length) {
+          sm.createSocket(droneName, info.github);
         }
       } else {
         const repos = info?.repos ?? parseRepos(repo);
@@ -101,10 +109,12 @@ function startManagementSocket() {
       req.on("data", (chunk: Buffer) => { body += chunk.toString(); });
       req.on("end", () => {
         try {
-          const { drone, repos } = JSON.parse(body);
-          if (!drone || !Array.isArray(repos) || repos.length === 0) {
+          const { drone, repos, github } = JSON.parse(body);
+          const hasRepos = Array.isArray(repos) && repos.length > 0;
+          const hasGithub = Array.isArray(github);
+          if (!drone || (!hasRepos && !hasGithub)) {
             res.writeHead(400);
-            res.end("Invalid request: need drone and non-empty repos array");
+            res.end("Invalid request: need drone and a non-empty repos or github array");
             return;
           }
           const info = readRepoInfo(config.socketDir, drone);
@@ -112,13 +122,29 @@ function startManagementSocket() {
             // Forgejo drones are gated by the proxy allowlist, not by a token
             // socket — and their repos.json carries host + fakeToken, which
             // writeRepos() would drop.
-            pm.updateProxy(drone, repos);
-            writeRepoInfo(config.socketDir, drone, { ...info, repos });
-          } else {
+            const next: RepoInfo = { ...info };
+            if (hasRepos) {
+              pm.updateProxy(drone, repos);
+              next.repos = repos;
+            }
+            if (hasGithub) {
+              next.github = github;
+              // createSocket ist idempotent, updateSocket zieht die Liste nach,
+              // falls der Socket schon lief.
+              if (github.length > 0) {
+                sm.createSocket(drone, github);
+                sm.updateSocket(drone, github);
+              } else {
+                sm.removeSocket(drone);
+              }
+            }
+            writeRepoInfo(config.socketDir, drone, next);
+          } else if (hasRepos) {
             sm.updateSocket(drone, repos);
             writeRepos(config.socketDir, drone, repos);
           }
-          console.log(`${msg.repoUpdated} [${drone}] → ${repos.join(", ")}`);
+          const shown = hasRepos ? repos : github;
+          console.log(`${msg.repoUpdated} [${drone}] → ${shown.join(", ")}`);
           res.writeHead(200);
           res.end("OK");
         } catch (err) {
