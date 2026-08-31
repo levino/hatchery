@@ -107,8 +107,17 @@ function startManagementSocket() {
             res.end("Invalid request: need drone and non-empty repos array");
             return;
           }
-          sm.updateSocket(drone, repos);
-          writeRepos(config.socketDir, drone, repos);
+          const info = readRepoInfo(config.socketDir, drone);
+          if (info && info.provider === "forgejo" && info.host) {
+            // Forgejo drones are gated by the proxy allowlist, not by a token
+            // socket — and their repos.json carries host + fakeToken, which
+            // writeRepos() would drop.
+            pm.updateProxy(drone, repos);
+            writeRepoInfo(config.socketDir, drone, { ...info, repos });
+          } else {
+            sm.updateSocket(drone, repos);
+            writeRepos(config.socketDir, drone, repos);
+          }
           console.log(`${msg.repoUpdated} [${drone}] → ${repos.join(", ")}`);
           res.writeHead(200);
           res.end("OK");

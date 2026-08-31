@@ -37,6 +37,10 @@ function installLocalFeature(featureDir: string, repoDir: string): () => void {
 const KVM_DEVICE = "/dev/kvm";
 
 /**
+ * Opt-in via `spawn --kvm`. Only Android emulators and VMs need it, and the
+ * detour below rewrites the repo's devcontainer.json into a temporary copy —
+ * too much machinery to run on every drone for a feature almost none use.
+ *
  * The devcontainer CLI has no --device flag, so KVM passthrough has to travel
  * through the config's runArgs. Write a copy with the device appended and return
  * its path. The CLI only accepts a config literally named devcontainer.json, so
@@ -92,9 +96,32 @@ const DEVCONTAINER_CONFIG_PATHS = [
 ];
 
 /**
+ * Normalize the URL forms of a repo argument to "host/org/repo".
+ * Accepts what a forge's clone button hands out:
+ *   ssh://git@host:22222/org/repo.git, https://host/org/repo.git, git@host:org/repo.git
+ * Returns null for anything that is already in short form (or a local path).
+ */
+export function normalizeRepoArg(repoArg: string): string | null {
+  let m = repoArg.match(/^(?:ssh|https?|git):\/\/(?:[^@/]+@)?([^:/]+)(?::\d+)?\/(.+)$/);
+  if (!m) {
+    // scp-style: git@host:org/repo.git
+    m = repoArg.match(/^(?:[^@/]+@)([^:/]+):(.+)$/);
+  }
+  if (!m) return null;
+
+  const host = m[1];
+  const path = m[2].replace(/\.git\/?$/, "").replace(/^\/+/, "");
+  if (path.split("/").length !== 2) return null;
+
+  // github.com URLs collapse to the plain org/repo form the GitHub path expects.
+  return host === "github.com" ? path : `${host}/${path}`;
+}
+
+/**
  * Parse a repo argument into its components.
  * - "org/repo" → GitHub
  * - "forgejo.example.com/org/repo" → Forgejo
+ * - "ssh://git@forgejo.example.com:22222/org/repo.git" → Forgejo (normalized)
  * - "/absolute/path" → local
  */
 export interface ParsedRepo {
@@ -103,6 +130,30 @@ export interface ParsedRepo {
   repo: string;        // org/repo
   name: string;        // drone name
   forgejoHost?: ForgejoHost;
+}
+
+/**
+ * Tailscale/Headscale reject hostnames longer than 63 bytes, and `tailscale up`
+ * then fails with "is too long" — the drone comes up fine but silently ends up
+ * outside the tailnet, so it is unreachable by name.
+ *
+ * Forgejo drone names embed the forge host
+ * (hatchery-forgejo-familie-levinkeller-de-<org>-<repo>) and blow past the limit
+ * routinely; long GitHub repo names can too. Drop whole dash-separated segments
+ * after the "hatchery" prefix until it fits — the tail carries org and repo,
+ * which is what actually identifies a drone.
+ */
+export function tailscaleHostname(name: string): string {
+  const sanitized = name.replace(/\./g, "-");
+  if (sanitized.length <= 63) return sanitized;
+
+  const parts = sanitized.split("-");
+  const prefix = parts[0] === "hatchery" ? [parts.shift()!] : [];
+  while (parts.length > 1 && [...prefix, ...parts].join("-").length > 63) {
+    parts.shift();
+  }
+  const out = [...prefix, ...parts].join("-");
+  return out.length <= 63 ? out : out.slice(-63).replace(/^-+/, "");
 }
 
 export function parseRepoArg(repoArg: string, config: Config): ParsedRepo {
@@ -114,6 +165,8 @@ export function parseRepoArg(repoArg: string, config: Config): ParsedRepo {
       name: `hatchery-${basename(localPath)}`,
     };
   }
+
+  repoArg = normalizeRepoArg(repoArg) ?? repoArg;
 
   const parts = repoArg.split("/");
   if (parts.length === 3) {
@@ -168,7 +221,7 @@ function getRemoteUser(configPath: string): string {
   return "root";
 }
 
-export async function spawn(docker: Docker, repoArg: string, config: Config, extraRepos: string[] = [], tsHostname?: string) {
+export async function spawn(docker: Docker, repoArg: string, config: Config, extraRepos: string[] = [], tsHostname?: string, kvm = false) {
   const parsed = parseRepoArg(repoArg, config);
   const name = parsed.name;
 
@@ -263,7 +316,7 @@ export async function spawn(docker: Docker, repoArg: string, config: Config, ext
       : `https://${config.tailscaleDomain}`;
     remoteEnvs.push(["HATCHERY_TS_LOGIN_SERVER", loginServer]);
   }
-  remoteEnvs.push(["HATCHERY_TS_HOSTNAME", (tsHostname ?? name).replace(/\./g, "-")]);
+  remoteEnvs.push(["HATCHERY_TS_HOSTNAME", tailscaleHostname(tsHostname ?? name)]);
   remoteEnvs.push(["CLAUDE_CONFIG_DIR", "/workspaces/worktrees/.claude"]);
 
   // Forgejo-specific: write repo info so creds-service creates the proxy on container start
@@ -278,6 +331,7 @@ export async function spawn(docker: Docker, repoArg: string, config: Config, ext
     remoteEnvs.push(["HATCHERY_PROVIDER", "forgejo"]);
     remoteEnvs.push(["HATCHERY_FORGEJO_HOST", parsed.host!]);
     remoteEnvs.push(["HATCHERY_FORGEJO_FAKE_TOKEN", fakeToken]);
+    remoteEnvs.push(["HATCHERY_FORGEJO_SSH_PORT", String(parsed.forgejoHost!.sshPort ?? 22)]);
   }
 
   // Write CLAUDE.md to persistent worktrees mount so Claude Code finds it in every drone
@@ -296,7 +350,7 @@ export async function spawn(docker: Docker, repoArg: string, config: Config, ext
   if (parsed.provider === "github") {
     writeRepos(config.socketDir, name, [parsed.repo, ...extraRepos]);
   }
-  await devcontainerUp(docker, repoDir, workspaceDir, devcontainerConfig, name, allRepos, config, remoteEnvs, globalHostKey);
+  await devcontainerUp(docker, repoDir, workspaceDir, devcontainerConfig, name, allRepos, config, remoteEnvs, globalHostKey, kvm);
 
   // Run lifecycle commands (postCreateCommand, postStartCommand, dotfiles, etc.)
   // If the project's updateContentCommand fails, devcontainer skips postStartCommand entirely,
@@ -327,11 +381,14 @@ async function devcontainerUp(
   config: Config,
   remoteEnvs: [string, string][],
   globalHostKey: string,
+  kvm = false,
 ): Promise<void> {
   const devcontainerBin = resolve("node_modules/.bin/devcontainer");
 
-  const kvm = installKvmConfig(configPath);
-  configPath = kvm.path;
+  const kvmCfg = kvm
+    ? installKvmConfig(configPath)
+    : { path: configPath, cleanup: undefined as (() => void) | undefined };
+  configPath = kvmCfg.path;
 
   const localFeatureDir = process.env.HATCHERY_LOCAL_FEATURE;
   let localFeatureCleanup: (() => void) | undefined;
@@ -394,7 +451,7 @@ async function devcontainerUp(
       await ensureRestartPolicy(docker, drone.id);
       try { process.kill(-child.pid!, "SIGTERM"); } catch {}
       localFeatureCleanup?.();
-      kvm.cleanup?.();
+      kvmCfg.cleanup?.();
       return;
     }
     await new Promise((r) => setTimeout(r, 2000));

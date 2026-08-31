@@ -226,7 +226,7 @@ if grep -q "^nameserver 100.100.100.100" /etc/resolv.conf 2>/dev/null; then
   if ! grep -q "^nameserver 1.1.1.1" /etc/resolv.conf 2>/dev/null; then
     cp /etc/resolv.conf /tmp/resolv.conf.new
     echo "nameserver 1.1.1.1" >> /tmp/resolv.conf.new
-    cp /tmp/resolv.conf.new /etc/resolv.conf || true
+    sudo cp /tmp/resolv.conf.new /etc/resolv.conf || true
   fi
 fi
 
@@ -258,7 +258,7 @@ if [ -n "$HATCHERY_TS_AUTH_KEY" ]; then
   # Re-apply DNS fallback: tailscale up rewrites /etc/resolv.conf with only
   # 100.100.100.100, losing any prior fallback. Always ensure 1.1.1.1 is present.
   if ! grep -q "^nameserver 1.1.1.1" /etc/resolv.conf 2>/dev/null; then
-    echo "nameserver 1.1.1.1" >> /etc/resolv.conf || true
+    echo "nameserver 1.1.1.1" | sudo tee -a /etc/resolv.conf >/dev/null || true
   fi
 
   # Tailscale's ts-input chain drops all inbound tailnet traffic (100.64.0.0/10) by default.
@@ -311,6 +311,7 @@ if [ "$HATCHERY_PROVIDER" = "forgejo" ] && [ -n "$HATCHERY_FORGEJO_HOST" ]; then
 export HATCHERY_PROVIDER=forgejo
 export HATCHERY_FORGEJO_HOST=${HATCHERY_FORGEJO_HOST}
 export HATCHERY_FORGEJO_FAKE_TOKEN=${HATCHERY_FORGEJO_FAKE_TOKEN}
+export HATCHERY_FORGEJO_SSH_PORT=${HATCHERY_FORGEJO_SSH_PORT:-22}
 ENVEOF
 
   # Start TCP→Unix socket bridge for the proxy
@@ -319,11 +320,18 @@ ENVEOF
   # Configure git credential helper for the proxy
   sudo git config --system credential.http://localhost:9998.helper /usr/local/bin/git-credential-hatchery-forgejo
 
-  # URL rewrites: redirect Forgejo HTTPS and SSH URLs to local proxy
+  # URL rewrites: redirect every Forgejo URL form to the local proxy.
+  # Drones have no SSH key for Forgejo, so an ssh:// remote — which is what
+  # Forgejo's clone button hands out — must be rewritten too, including the
+  # instance's SSH port (Forgejo is rarely on 22 behind a reverse proxy).
   # Unset first to be idempotent (postStartCommand runs on every container start)
+  FORGEJO_SSH_PORT="${HATCHERY_FORGEJO_SSH_PORT:-22}"
   sudo git config --system --unset-all "url.http://localhost:9998/.insteadOf" 2>/dev/null || true
   sudo git config --system "url.http://localhost:9998/.insteadOf" "https://${HATCHERY_FORGEJO_HOST}/"
+  sudo git config --system --add "url.http://localhost:9998/.insteadOf" "http://${HATCHERY_FORGEJO_HOST}/"
   sudo git config --system --add "url.http://localhost:9998/.insteadOf" "git@${HATCHERY_FORGEJO_HOST}:"
+  sudo git config --system --add "url.http://localhost:9998/.insteadOf" "ssh://git@${HATCHERY_FORGEJO_HOST}/"
+  sudo git config --system --add "url.http://localhost:9998/.insteadOf" "ssh://git@${HATCHERY_FORGEJO_HOST}:${FORGEJO_SSH_PORT}/"
 
   # Set up tea wrapper if tea is installed
   if command -v tea >/dev/null 2>&1; then

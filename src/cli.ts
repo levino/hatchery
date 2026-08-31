@@ -17,7 +17,7 @@ import {
   readRepos,
   execInDrone,
 } from "./docker.ts";
-import { spawn } from "./spawn.ts";
+import { spawn, normalizeRepoArg } from "./spawn.ts";
 import { defaultSocketDir, hasWork, listOrphans, removePath, reposDir } from "./gc.ts";
 import { msg, status, HatcheryError } from "./zerg.ts";
 
@@ -27,6 +27,7 @@ function resolveDroneName(repo: string): string {
   if (existsSync(localPath)) {
     return `hatchery-${basename(localPath)}`;
   }
+  repo = normalizeRepoArg(repo) ?? repo;
   const parts = repo.split("/");
   if (parts.length === 3) {
     return forgejoFroneName(parts[0], `${parts[1]}/${parts[2]}`);
@@ -42,13 +43,14 @@ program
   .command("spawn")
   .argument("<repo>", "Repository to spawn (org/repo for GitHub, host/org/repo for Forgejo)")
   .option("--repos <repos>", "Additional repos for token access (comma-separated org/repo)")
+  .option("--kvm", "Pass /dev/kvm into the drone (Android emulators, VMs)")
   .option("--hostname <hostname>", "Override Tailscale hostname for the drone")
   .description("Spawn a new drone from a repository")
-  .action(async (repo: string, opts: { repos?: string; hostname?: string }) => {
+  .action(async (repo: string, opts: { repos?: string; hostname?: string; kvm?: boolean }) => {
     const config = loadConfig();
     const docker = createClient();
     const extraRepos = opts.repos ? opts.repos.split(",").map((r: string) => r.trim()) : [];
-    await spawn(docker, repo, config, extraRepos, opts.hostname);
+    await spawn(docker, repo, config, extraRepos, opts.hostname, opts.kvm ?? false);
   });
 
 program

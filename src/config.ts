@@ -7,6 +7,9 @@ export interface ForgejoHost {
   url: string;
   token: string;
   user: string;
+  /** SSH port of the Forgejo instance. Only used to rewrite ssh:// remotes
+   *  inside drones — they never speak SSH to Forgejo themselves. */
+  sshPort?: number;
 }
 
 export interface Config {
