@@ -5,7 +5,7 @@ import { mkdirSync, unlinkSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import Docker from "dockerode";
 import { loadConfig } from "./config.ts";
-import { LABEL_MANAGED, LABEL_DRONE, LABEL_REPO, listDrones, readRepoInfo, writeRepoInfo, writeRepos, type RepoInfo } from "./docker.ts";
+import { LABEL_MANAGED, LABEL_DRONE, LABEL_REPO, listDrones, readRepoInfo, writeRepoInfo, writeRepos, ensureForgejoBridge, type RepoInfo } from "./docker.ts";
 import { TokenProvider } from "./creds/token.ts";
 import { SocketManager } from "./creds/server.ts";
 import { ProxyManager } from "./creds/proxy.ts";
@@ -20,6 +20,19 @@ const sm = new SocketManager(config.socketDir, tp);
 const pm = new ProxyManager(config.socketDir);
 const docker = new Docker();
 
+/** The proxy socket is only half the Forgejo path — the drone needs its
+ *  socat bridge too, and that one does not survive a host reboot on its own.
+ *  See ensureForgejoBridge(). */
+function reviveBridge(droneName: string) {
+  ensureForgejoBridge(docker, droneName)
+    .then((started) => {
+      if (started) console.log(`${msg.bridgeRevived} [${droneName}]`);
+    })
+    .catch((err) => {
+      console.error(`Bridge failed [${droneName}]:`, err);
+    });
+}
+
 // Recovery: recreate sockets/proxies for existing drones
 async function recover() {
   console.log(msg.recovering);
@@ -31,6 +44,7 @@ async function recover() {
         const forgejoHost = config.forgejo[info.host];
         if (forgejoHost) {
           pm.createProxy(d.name, info.repos, forgejoHost, info.fakeToken);
+          reviveBridge(d.name);
         }
         // Zusaetzlich GitHub: der Drone-Container bringt den Credential-Helper
         // laengst mit, ihm fehlte nur der Socket.
@@ -70,6 +84,7 @@ async function watchEvents() {
         const forgejoHost = config.forgejo[info.host];
         if (forgejoHost) {
           pm.createProxy(droneName, info.repos, forgejoHost, info.fakeToken);
+          reviveBridge(droneName);
         }
         if (info.github?.length) {
           sm.createSocket(droneName, info.github);

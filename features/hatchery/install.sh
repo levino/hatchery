@@ -314,8 +314,15 @@ export HATCHERY_FORGEJO_FAKE_TOKEN=${HATCHERY_FORGEJO_FAKE_TOKEN}
 export HATCHERY_FORGEJO_SSH_PORT=${HATCHERY_FORGEJO_SSH_PORT:-22}
 ENVEOF
 
-  # Start TCP→Unix socket bridge for the proxy
-  nohup socat TCP-LISTEN:9998,bind=127.0.0.1,reuseaddr,fork UNIX-CONNECT:/var/run/hatchery-sockets/proxy.sock > /tmp/hatchery-bridge.log 2>&1 &
+  # Start TCP→Unix socket bridge for the proxy, unless one is already up.
+  # hatchery-creds starts the same bridge whenever it (re)creates the proxy
+  # socket, because this script does not run on a plain container restart --
+  # see ensureForgejoBridge() in src/docker.ts. Either side may get here
+  # first, so both check. The bracket in "[9]998" stops pgrep from matching
+  # the shell that carries the pattern.
+  if ! pgrep -f "socat.*TCP-LISTEN:[9]998" > /dev/null 2>&1; then
+    nohup socat TCP-LISTEN:9998,bind=127.0.0.1,reuseaddr,fork UNIX-CONNECT:/var/run/hatchery-sockets/proxy.sock > /tmp/hatchery-bridge.log 2>&1 &
+  fi
 
   # Configure git credential helper for the proxy
   sudo git config --system credential.http://localhost:9998.helper /usr/local/bin/git-credential-hatchery-forgejo
@@ -324,7 +331,7 @@ ENVEOF
   # Drones have no SSH key for Forgejo, so an ssh:// remote — which is what
   # Forgejo's clone button hands out — must be rewritten too, including the
   # instance's SSH port (Forgejo is rarely on 22 behind a reverse proxy).
-  # Unset first to be idempotent (postStartCommand runs on every container start)
+  # Unset first to be idempotent (this script reruns on every devcontainer up)
   FORGEJO_SSH_PORT="${HATCHERY_FORGEJO_SSH_PORT:-22}"
   sudo git config --system --unset-all "url.http://localhost:9998/.insteadOf" 2>/dev/null || true
   sudo git config --system "url.http://localhost:9998/.insteadOf" "https://${HATCHERY_FORGEJO_HOST}/"

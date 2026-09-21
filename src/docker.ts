@@ -137,6 +137,71 @@ export async function execInDrone(
   };
 }
 
+/** Where the drone reaches its Forgejo proxy. git inside the drone rewrites
+ *  every Forgejo URL to this port (insteadOf rules in the container's --system
+ *  gitconfig); socat forwards the port to proxy.sock.
+ *
+ *  Keep in sync with features/hatchery/install.sh, which starts the same
+ *  bridge from the post-start script. */
+export const FORGEJO_BRIDGE_PORT = 9998;
+const DRONE_PROXY_SOCKET = "/var/run/hatchery-sockets/proxy.sock";
+
+/** `pgrep -f` also matches the shell carrying the pattern, so bracket the
+ *  first digit: "[9]998" matches "9998" but not itself. Without this the
+ *  guard below always reports a running bridge. */
+function selfExcludingPort(port: number): string {
+  const s = String(port);
+  return `[${s[0]}]${s.slice(1)}`;
+}
+
+/** Start a drone's Forgejo bridge unless it is already running.
+ *
+ *  The post-start script starts the bridge too, but postStartCommand only
+ *  runs on `devcontainer up` — *not* when the Docker daemon restarts a
+ *  container by its restart policy after the host reboots. The insteadOf
+ *  rewrites live in the container filesystem and do survive that, so a
+ *  rebooted Forgejo drone kept rewriting every clone/fetch onto a port with
+ *  nothing behind it ("connection refused", looking exactly like the proxy
+ *  being down). Called wherever the proxy socket is created, so the bridge
+ *  comes back together with the drone.
+ *
+ *  Returns true when this call actually started a bridge. */
+export async function ensureForgejoBridge(
+  docker: Docker,
+  droneName: string,
+): Promise<boolean> {
+  const drone = await findDrone(docker, droneName);
+  if (!drone || drone.state !== "running") return false;
+
+  const pattern = `socat.*TCP-LISTEN:${selfExcludingPort(FORGEJO_BRIDGE_PORT)}`;
+  const { exitCode } = await execInDrone(docker, drone.id, [
+    "sh",
+    "-c",
+    `pgrep -f "${pattern}" >/dev/null 2>&1`,
+  ]);
+  if (exitCode === 0) return false;
+
+  // socat is the exec command itself, with no wrapping shell -- the exact
+  // shape of `docker exec -d`. Two things that look equivalent are not:
+  // backgrounding from a shell (`sh -c "socat ... &"`) loses the process when
+  // the shell exits and Docker tears the exec down, and redirecting to the
+  // post-start script's log (`> /tmp/hatchery-bridge.log`) fails with
+  // EACCES -- exec runs as root but the drone has no CAP_DAC_OVERRIDE, and
+  // that file belongs to the remote user. Nothing is attached, so socat's
+  // output is discarded; `hatchery-creds` logs the revival instead.
+  const exec = await docker.getContainer(drone.id).exec({
+    Cmd: [
+      "socat",
+      `TCP-LISTEN:${FORGEJO_BRIDGE_PORT},bind=127.0.0.1,reuseaddr,fork`,
+      `UNIX-CONNECT:${DRONE_PROXY_SOCKET}`,
+    ],
+    AttachStdout: false,
+    AttachStderr: false,
+  });
+  await exec.start({ Detach: true });
+  return true;
+}
+
 export async function removeDrone(
   docker: Docker,
   id: string,

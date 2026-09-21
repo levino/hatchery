@@ -38,6 +38,7 @@ export const msg = {
   repoNotConnected: "Cannot sever what was never linked.",
   repoCannotRemovePrimary: "Cannot disconnect the primary genome — the drone would lose its identity.",
   proxyCreated: "Nydus worm online.",
+  bridgeRevived: "Nydus link re-established.",
   proxyRemoved: "Nydus worm collapsed.",
   gcNothing: "No creep left to reclaim. The hive is clean.",
   gcComplete: "Creep reclaimed. The hive breathes again.",
