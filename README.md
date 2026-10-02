@@ -77,6 +77,8 @@ graph LR
 
 A GitHub App generates short-lived installation tokens scoped to specific repos. Each drone gets a Unix socket that serves tokens on demand. Inside the container, a git credential helper and `gh` CLI wrapper call the socket transparently.
 
+The socket enforces the drone's repo list: a token request for a repo or org the drone is not connected to gets HTTP 403 (with a hint to run `hatchery repo connect <drone-repo> <org/repo>`), and tokens are always created for an explicit list of repos, never for a whole installation.
+
 ```mermaid
 sequenceDiagram
     participant Tool as git/gh inside drone

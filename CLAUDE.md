@@ -30,6 +30,7 @@ See [README.md](README.md) for full architecture docs.
 - **Container**: socket mounted at `/var/run/hatchery-sockets/creds.sock`
 - **git**: credential helper curls socket → gets GitHub App installation token
 - **gh CLI**: wrapper sets `GH_TOKEN` from socket before calling real `gh`
+- **Scope**: the socket only serves tokens for the drone's connected repos (`?repo=`/`?org=` are checked in `src/creds/scope.ts`, else HTTP 403). The repo list lives in `~/.hatchery/sockets/<drone>.repos.json`, outside the drone's mount
 - **SSH→HTTPS rewrite**: `git config url."https://github.com/".insteadOf "git@github.com:"` so SSH clone URLs work with the HTTPS credential helper
 
 ### Key Files
@@ -43,6 +44,7 @@ See [README.md](README.md) for full architecture docs.
 | `src/creds-service.ts` | Persistent service: Docker event watcher, socket lifecycle |
 | `src/creds/token.ts` | GitHub App JWT creation, installation token API calls |
 | `src/creds/server.ts` | SocketManager: per-drone HTTP-over-Unix-socket servers |
+| `src/creds/scope.ts` | Which repos a token request may cover (`npm test`) |
 | `features/hatchery/install.sh` | Devcontainer feature: credential helpers, SSH keys, Tailscale, dev tools (zellij + Claude Code), fallback Claude `CLAUDE.md` |
 | `features/hatchery/devcontainer-feature.json` | Feature metadata, published to `ghcr.io/levino/hatchery/hatchery:1` |
 | `compose.yaml` | Docker Compose for persistent creds-service |
