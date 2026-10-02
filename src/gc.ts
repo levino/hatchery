@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { listDrones } from "./docker.ts";
+import { listDrones, reposFilePath } from "./docker.ts";
 
 /** Mirrors HATCHERY_DIR in spawn.ts — where per-drone worktrees live. */
 export const reposDir = join(homedir(), ".hatchery", "repos");
@@ -90,7 +90,8 @@ export async function listOrphans(docker: Docker, socketDir: string): Promise<Or
   for (const name of [...names].sort()) {
     if (live.has(name)) continue;
     const droneDir = join(reposDir, name);
-    const paths = [droneDir, join(socketDir, name)].filter((p) => existsSync(p));
+    const paths = [droneDir, join(socketDir, name), reposFilePath(socketDir, name)]
+      .filter((p) => existsSync(p));
     orphans.push({ name, paths, ...inspectWorktrees(droneDir) });
   }
   return orphans;

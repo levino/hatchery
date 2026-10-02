@@ -1,5 +1,5 @@
 import Docker from "dockerode";
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
 const LABEL_MANAGED = "hatchery.managed";
@@ -220,19 +220,37 @@ export async function removeDrone(
   }
 }
 
+/** Lives next to the per-drone dirs, not inside one: `<socketDir>/<drone>/`
+ *  is bind-mounted writable into the drone, which could otherwise widen its
+ *  own token scope on the next restart. */
 export function reposFilePath(socketDir: string, droneName: string): string {
+  return join(socketDir, `${droneName}.repos.json`);
+}
+
+function legacyReposFilePath(socketDir: string, droneName: string): string {
   return join(socketDir, droneName, "repos.json");
 }
 
-/** Read repos.json — handles both old array format and new RepoInfo object. */
+function parseRepoInfo(data: string): RepoInfo {
+  const parsed = JSON.parse(data);
+  if (Array.isArray(parsed)) {
+    return { provider: "github", repos: parsed };
+  }
+  return parsed as RepoInfo;
+}
+
+/** Handles both the old array format and the RepoInfo object, and moves a
+ *  pre-existing in-drone repos.json out of the drone's reach once. */
 export function readRepoInfo(socketDir: string, droneName: string): RepoInfo | null {
   try {
-    const data = readFileSync(reposFilePath(socketDir, droneName), "utf-8");
-    const parsed = JSON.parse(data);
-    if (Array.isArray(parsed)) {
-      return { provider: "github", repos: parsed };
-    }
-    return parsed as RepoInfo;
+    return parseRepoInfo(readFileSync(reposFilePath(socketDir, droneName), "utf-8"));
+  } catch {}
+  const legacy = legacyReposFilePath(socketDir, droneName);
+  try {
+    const info = parseRepoInfo(readFileSync(legacy, "utf-8"));
+    writeRepoInfo(socketDir, droneName, info);
+    try { unlinkSync(legacy); } catch {}
+    return info;
   } catch {
     return null;
   }
@@ -244,10 +262,14 @@ export function readRepos(socketDir: string, droneName: string): string[] | null
   return info ? info.repos : null;
 }
 
+/** Write-then-rename, so the CLI (host user) and creds-service (root) can
+ *  both replace a file the other one created. */
 export function writeRepoInfo(socketDir: string, droneName: string, info: RepoInfo): void {
-  const dir = join(socketDir, droneName);
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(reposFilePath(socketDir, droneName), JSON.stringify(info));
+  mkdirSync(socketDir, { recursive: true });
+  const target = reposFilePath(socketDir, droneName);
+  const tmp = join(socketDir, `.${droneName}.repos.json.${process.pid}.tmp`);
+  writeFileSync(tmp, JSON.stringify(info));
+  renameSync(tmp, target);
 }
 
 /** Backward-compatible: writes a GitHub-style repos array. */
