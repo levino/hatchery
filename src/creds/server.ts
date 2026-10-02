@@ -2,6 +2,7 @@ import { createServer, type Server } from "node:http";
 import { unlinkSync, chmodSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { TokenProvider } from "./token.ts";
+import { resolveScope, ScopeDeniedError } from "./scope.ts";
 import { msg } from "../zerg.ts";
 
 interface SocketEntry {
@@ -35,14 +36,22 @@ export class SocketManager {
       const url = new URL(req.url ?? "/", "http://localhost");
       if (url.pathname === "/token") {
         try {
-          const repoParam = url.searchParams.get("repo");
-          const orgParam = url.searchParams.get("org");
-          const targetRepos = repoParam ? [repoParam] : repos;
-          const orgOverride = orgParam ?? undefined;
-          const token = await this.tokenProvider.getToken(targetRepos, orgOverride);
+          const allowed = this.sockets.get(droneName)?.repos ?? [];
+          const targetRepos = resolveScope(
+            allowed,
+            url.searchParams.get("repo"),
+            url.searchParams.get("org"),
+          );
+          const token = await this.tokenProvider.getToken(targetRepos);
           res.writeHead(200, { "Content-Type": "text/plain" });
           res.end(token);
         } catch (err) {
+          if (err instanceof ScopeDeniedError) {
+            console.log(`Token denied [${droneName}]: ${err.message}`);
+            res.writeHead(403, { "Content-Type": "text/plain" });
+            res.end(err.message);
+            return;
+          }
           res.writeHead(500);
           res.end(String(err));
         }

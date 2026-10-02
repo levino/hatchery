@@ -10,7 +10,8 @@
   "scripts": {
     "build": "tsc",
     "hatchery": "node --experimental-strip-types src/cli.ts",
-    "hatchery-creds": "node --experimental-strip-types src/creds-service.ts"
+    "hatchery-creds": "node --experimental-strip-types src/creds-service.ts",
+    "test": "node --experimental-strip-types --test 'src/**/*.test.ts'"
   },
   "dependencies": {
     "@devcontainers/cli": "^0.75.0",

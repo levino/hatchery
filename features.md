@@ -81,40 +81,42 @@ Each drone gets its own Unix socket mounted from the host. The credential servic
 The socket approach was chosen over HTTP-on-Docker-network because it requires no authentication layer. The identity is the mount itself — only the drone that has the socket mounted can talk to it. A shared HTTP endpoint would require an auth mechanism to prevent one drone from requesting tokens for another drone's repos.
 
 **Setup at drone creation**:
-1. CLI tells credential service: "create socket for `levinkeller-homepage`, scoped to repo `levinkeller/homepage`"
-2. Service creates `/var/run/hatchery/levinkeller-homepage.sock` and starts listening
-3. Socket is mounted into the drone at `/var/run/github-creds.sock`
+1. CLI records the drone's repo list (`levinkeller/homepage` plus any `--repos`) in `~/.hatchery/sockets/<drone>.repos.json` — outside the drone's mount, so the drone cannot edit its own scope
+2. Credential service creates `~/.hatchery/sockets/<drone>/creds.sock` and starts listening
+3. The `<drone>/` directory is mounted into the drone at `/var/run/hatchery-sockets/`
 
-**Token caching**: The service caches tokens per repo. When a drone requests a token, the service returns the cached token if it has >5 minutes of validity remaining, otherwise generates a new one. GitHub App installation tokens expire after 1 hour. There is no meaningful rate limit on token creation — the limit is on API requests made *with* the token (5,000/hour).
+**Scope enforcement**: The socket serves `GET /token`, `GET /token?repo=org/name` and `GET /token?org=org`. Every request is checked against the drone's repo list (case-insensitive): `repo` must be in the list, `org` yields a token for the drone's repos in that org, no parameter yields one for the drone's repos in the org of its first repo (one installation token covers one org). Anything else gets HTTP 403 with a plain-text reason telling the user to run `hatchery repo connect <drone-repo> <org/repo>`. Tokens are always created with an explicit repository list — never for a whole installation. `hatchery repo connect`/`disconnect` update the list live via the host-only management socket.
 
-**Service recovery**: The credential service is stateless. If it restarts, it queries Docker for all running drones with hatchery labels, recreates sockets, and resumes. Docker is the source of truth.
+**Token caching**: The service caches tokens per repo set. When a drone requests a token, the service returns the cached token if it has >5 minutes of validity remaining, otherwise generates a new one. GitHub App installation tokens expire after 1 hour. There is no meaningful rate limit on token creation — the limit is on API requests made *with* the token (5,000/hour).
+
+**Service recovery**: If the credential service restarts, it queries Docker for all running drones with hatchery labels, reads their repo lists and recreates the sockets.
 
 ### Drone-Side Integration
 
-Two integration points are needed inside each drone:
+All token fetches go through `/usr/local/bin/hatchery-token`, which prints the token or, on a denial, the service's reason on stderr.
 
 **Git credential helper** — a script that git calls whenever it needs auth:
 
 ```bash
 #!/bin/sh
-TOKEN=$(curl -s --unix-socket /var/run/github-creds.sock http://localhost/token)
+TOKEN=$(/usr/local/bin/hatchery-token "repo=$REPO") || exit 1
 echo "protocol=https"
 echo "host=github.com"
 echo "username=x-access-token"
 echo "password=$TOKEN"
 ```
 
-Configured via `git config credential.helper /usr/local/bin/git-credential-hatchery`. Git never stores a token — every operation gets a fresh one from the socket.
+Configured via `git config --system credential.https://github.com.helper /usr/local/bin/git-credential-hatchery` (with `useHttpPath`, so the helper sees the repo). Git never stores a token — every operation gets a fresh one from the socket.
 
-**`gh` CLI wrapper** — `gh` doesn't use git credential helpers, it uses `GH_TOKEN` or its own auth store. A wrapper script replaces the `gh` binary:
+**`gh` CLI wrapper** — `gh` doesn't use git credential helpers, it uses `GH_TOKEN` or its own auth store. A wrapper script replaces the `gh` binary and picks the org from `--repo`/`-R` or the `origin` remote:
 
 ```bash
 #!/bin/sh
-export GH_TOKEN=$(curl -s --unix-socket /var/run/github-creds.sock http://localhost/token)
-exec /usr/bin/gh "$@"
+GH_TOKEN=$(/usr/local/bin/hatchery-token "org=$ORG") && export GH_TOKEN
+exec /usr/bin/gh-real "$@"
 ```
 
-AI agents and other tools that call `gh` get a scoped, short-lived token transparently. They cannot escalate to other repos because the socket only serves tokens for the repos configured at drone creation time.
+AI agents and other tools that call `gh` get a scoped, short-lived token transparently. They cannot escalate to other repos: the socket only serves tokens for the repos connected to that drone, and a request for any other repo or org is refused with a 403 that tells the agent to ask the user for `hatchery repo connect`.
 
 ## What Each Repo's devcontainer.json Needs
 

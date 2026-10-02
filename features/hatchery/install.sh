@@ -8,6 +8,26 @@ set -e
 echo 'export CLAUDE_CONFIG_DIR=/workspaces/worktrees/.claude' > /etc/profile.d/claude-config.sh
 echo CLAUDE_CONFIG_DIR=/workspaces/worktrees/.claude >> /etc/environment
 
+# --- token fetch (GitHub) ---
+# Prints a token, or the creds-service's reason (e.g. a 403 for a repo the
+# drone is not connected to) on stderr and exits 1.
+cat > /usr/local/bin/hatchery-token <<'TOKEN'
+#!/bin/sh
+OUT=$(curl -s -w ' %{http_code}' --unix-socket /var/run/hatchery-sockets/creds.sock "http://localhost/token${1:+?$1}") || {
+  echo "hatchery: cannot reach the creds socket (is hatchery-creds running?)" >&2
+  exit 1
+}
+CODE=${OUT##* }
+BODY=${OUT% *}
+if [ "$CODE" = "200" ] && [ -n "$BODY" ]; then
+  printf '%s' "$BODY"
+else
+  echo "hatchery: no GitHub token (HTTP $CODE): $BODY" >&2
+  exit 1
+fi
+TOKEN
+chmod +x /usr/local/bin/hatchery-token
+
 # --- git credential helper (GitHub) ---
 cat > /usr/local/bin/git-credential-hatchery <<'CRED'
 #!/bin/sh
@@ -20,11 +40,10 @@ case "$1" in
       esac
     done
     if [ -n "$REPO" ]; then
-      T=$(curl -sf --unix-socket /var/run/hatchery-sockets/creds.sock "http://localhost/token?repo=${REPO}")
+      T=$(/usr/local/bin/hatchery-token "repo=${REPO}") || exit 1
     else
-      T=$(curl -sf --unix-socket /var/run/hatchery-sockets/creds.sock http://localhost/token)
+      T=$(/usr/local/bin/hatchery-token) || exit 1
     fi
-    [ -z "$T" ] && exit 1
     echo "protocol=https"
     echo "host=github.com"
     echo "username=x-access-token"
@@ -82,12 +101,11 @@ if [ -z "$ORG" ]; then
       ;;
   esac
 fi
-if [ -n "$ORG" ]; then
-  GH_TOKEN=$(curl -s --unix-socket /var/run/hatchery-sockets/creds.sock "http://localhost/token?org=${ORG}")
+if GH_TOKEN=$(/usr/local/bin/hatchery-token ${ORG:+"org=${ORG}"}); then
+  export GH_TOKEN
 else
-  GH_TOKEN=$(curl -s --unix-socket /var/run/hatchery-sockets/creds.sock http://localhost/token)
+  unset GH_TOKEN
 fi
-export GH_TOKEN
 exec /usr/bin/gh-real "$@"
 GH
   chmod +x /usr/local/bin/gh
@@ -200,22 +218,25 @@ You are running inside a Hatchery drone — a devcontainer managed by Hatchery.
 - NEVER modify git credential helper configuration (`git config credential.*`)
 - NEVER store tokens in environment variables or files
 
-## Multi-org access
+## Which repos you can reach
 
-This drone can access repos from **multiple GitHub orgs**. Credentials are routed automatically per org.
+Tokens only cover the GitHub repos connected to this drone (its own repo plus any added with
+`hatchery repo connect`). The `gh` wrapper picks the org from `--repo`/`-R` or from the `git remote`
+of your current directory; use `gh` normally with `--repo org/repo` and do NOT set `GH_TOKEN`
+manually. git clone/push/pull works automatically for connected repos.
 
-The `gh` wrapper detects the target org from the `--repo`/`-R` flag or from the `git remote`
-of your current directory. Use `gh` normally with `--repo org/repo`; do NOT set `GH_TOKEN`
-manually (it would break other orgs). git clone/push/pull works automatically.
+## When access is denied
 
-## When git authentication fails
+A request for a repo that is not connected is refused with an explanation on stderr
+(`hatchery: no GitHub token (HTTP 403): ...`). If you need such a repo:
 
-1. Do NOT try to fix it yourself — no token hardcoding, no `gh auth`, no workarounds.
-2. Tell the user the hatchery GitHub App lacks access to this repo/org and must be granted it
-   (install/scope the app, add the org to config.json, restart the creds-service).
+1. Do NOT try to work around it — no token hardcoding, no `gh auth`, no other credentials.
+2. Tell the user to run on the hatchery host: `hatchery repo connect <this-drone-repo> <org/repo>`
+   (with `--github` if this drone lives on Forgejo).
 
-This applies especially when you can access some repos but not others — the token works, but the
-GitHub App installation is not authorized for that specific repository.
+If the repo is connected but GitHub still refuses (404, "Resource not accessible by integration"),
+the hatchery GitHub App is not installed on that repo/org or lacks the permission. Tell the user;
+do not work around it.
 CLAUDEMD
   chown -R 1000:1000 "$CLAUDE_DIR" 2>/dev/null || true
 fi
