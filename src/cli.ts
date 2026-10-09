@@ -21,6 +21,7 @@ import {
 import { spawn, normalizeRepoArg } from "./spawn.ts";
 import { defaultSocketDir, hasWork, listOrphans, removePath, reposDir } from "./gc.ts";
 import { msg, status, HatcheryError } from "./zerg.ts";
+import { accountLoginPath, hasAccountLogin } from "./claude-auth.ts";
 
 /** Resolve a CLI argument to the drone name, handling local paths, org/repo, and host/org/repo. */
 function resolveDroneName(repo: string): string {
@@ -68,6 +69,7 @@ program
     }
     for (const d of drones) {
       console.log(status(d.name, d.state));
+      if (hasAccountLogin(d.name)) console.log(msg.accountLogin(accountLoginPath(d.name)));
     }
   });
 
@@ -86,6 +88,7 @@ program
     console.log(status(d.name, d.state));
     console.log(`  Repo:      ${d.repo}`);
     console.log(`  Container: ${d.id.slice(0, 12)}`);
+    if (hasAccountLogin(d.name)) console.log(msg.accountLogin(accountLoginPath(d.name)));
   });
 
 program

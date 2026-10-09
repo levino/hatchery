@@ -15,7 +15,10 @@ export const msg = {
   slayComplete: "Drone eliminated. The swarm grows weaker.",
   burrowComplete: "Drone burrowed. Awaiting further orders.",
   unburrowComplete: "Drone unburrowed. Ready for combat.",
-  noDrones: "The hive is empty. Spawn some drones.",
+  accountLogin: (path: string) =>
+    `  ⚠ Infested: full Claude account login in this drone (${path}).\n` +
+    "    Inside the drone: 'env -u CLAUDE_CODE_OAUTH_TOKEN claude', /logout, then connect-claude.",
+  noDrones:"The hive is empty. Spawn some drones.",
   repoNotFound: "We require more minerals.",
   tooManyDrones: "Spawn more overlords. Insufficient vespene gas.",
   highMemory: "Nuclear launch detected.",

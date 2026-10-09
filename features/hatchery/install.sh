@@ -163,6 +163,112 @@ else
   echo "WARNING: no npm in this image — Claude Code not installed"
 fi
 
+# --- Claude Code auth: inference-only token, never an account login ---
+# A drone gets model access from a `claude setup-token` token, which carries
+# only the OAuth scope user:inference — no connectors, no profile, no
+# sessions — and that limit is enforced by Anthropic, not by the drone.
+# connect-claude keeps the token on tmpfs (/dev/shm: never on disk, gone when
+# the drone stops), and every new shell exports it as CLAUDE_CODE_OAUTH_TOKEN.
+# A full `/login` would instead write a full-scope login into the bind-mounted
+# CLAUDE_CONFIG_DIR, i.e. onto the host, persistently.
+mkdir -p /etc/claude-code/managed-settings.d
+# Belt and braces: even if someone does /login, no claude.ai connectors load.
+echo '{ "disableClaudeAiConnectors": true }' > /etc/claude-code/managed-settings.d/50-hatchery.json
+
+cat > /etc/hatchery-claude-env.sh <<'ENV'
+# Export this drone's inference-only Claude token, if connect-claude has run.
+_hatchery_ct="/dev/shm/hatchery-claude-$(id -u)/token"
+if [ -r "$_hatchery_ct" ]; then
+  CLAUDE_CODE_OAUTH_TOKEN=$(cat "$_hatchery_ct")
+  export CLAUDE_CODE_OAUTH_TOKEN
+fi
+unset _hatchery_ct
+ENV
+ln -sf /etc/hatchery-claude-env.sh /etc/profile.d/hatchery-claude.sh
+# Debian's zsh never reads /etc/profile.d (see above): zshenv covers every zsh,
+# bash.bashrc covers interactive non-login bash.
+[ -d /etc/zsh ] && touch /etc/zsh/zshenv
+for rc in /etc/zsh/zshenv /etc/bash.bashrc; do
+  [ -f "$rc" ] || continue
+  grep -q hatchery-claude-env "$rc" \
+    || echo '[ -r /etc/hatchery-claude-env.sh ] && . /etc/hatchery-claude-env.sh' >> "$rc"
+done
+
+cat > /usr/local/bin/connect-claude <<'CONNECT'
+#!/bin/sh
+# connect-claude — give this drone model access with an inference-only token.
+#   connect-claude               run `claude setup-token`, store the token
+#   connect-claude --status      show whether a token is stored, and its age
+#   connect-claude --disconnect  forget the token
+set -e
+DIR="/dev/shm/hatchery-claude-$(id -u)"
+TOKEN_FILE="$DIR/token"
+
+case "${1:-}" in
+  --status)
+    if [ -r "$TOKEN_FILE" ]; then
+      echo "Connected. Token stored $(cat "$DIR/created" 2>/dev/null || echo '?'); valid for one year from then."
+      exit 0
+    fi
+    echo "Not connected. Run: connect-claude"
+    exit 1
+    ;;
+  --disconnect)
+    rm -rf "$DIR"
+    echo "Token forgotten. New shells won't have it; in this one: unset CLAUDE_CODE_OAUTH_TOKEN"
+    echo "It is still valid at Anthropic until it expires or you revoke it."
+    exit 0
+    ;;
+  "") ;;
+  *)
+    echo "usage: connect-claude [--status|--disconnect]" >&2
+    exit 2
+    ;;
+esac
+
+command -v claude >/dev/null 2>&1 || { echo "Claude Code is not installed in this drone." >&2; exit 1; }
+
+CREDS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json"
+if [ -f "$CREDS" ]; then
+  echo "WARNING: a full account login is stored at $CREDS (connectors, profile, refresh token)."
+  echo "         Revoke it: run 'env -u CLAUDE_CODE_OAUTH_TOKEN claude', type /logout, then check the file is gone."
+  echo
+fi
+
+cat <<'EOF'
+Running `claude setup-token`. Open the link, approve, and paste the code back.
+The consent page should ask for model access only. If it asks for connectors
+or your profile, abort: that is a full login, not an inference-only token.
+
+EOF
+env -u CLAUDE_CODE_OAUTH_TOKEN claude setup-token
+
+echo
+trap 'stty echo 2>/dev/null || true' EXIT INT TERM
+printf 'Paste the token it printed (input hidden): '
+stty -echo 2>/dev/null || true
+IFS= read -r TOKEN || true
+stty echo 2>/dev/null || true
+echo
+TOKEN=$(printf '%s' "$TOKEN" | tr -d '[:space:]')
+[ -n "$TOKEN" ] || { echo "No token entered, nothing stored." >&2; exit 1; }
+case "$TOKEN" in
+  sk-ant-oat*) ;;
+  *) echo "Note: that doesn't look like a setup-token token (sk-ant-oat…). Storing it anyway." >&2 ;;
+esac
+
+umask 077
+mkdir -p "$DIR"
+chmod 700 "$DIR"
+printf '%s' "$TOKEN" > "$TOKEN_FILE"
+date -u +%Y-%m-%d > "$DIR/created"
+
+echo "Stored in RAM ($TOKEN_FILE). New shells use it automatically."
+echo "For this shell:  . /etc/hatchery-claude-env.sh"
+echo "It is gone when the drone stops; run connect-claude again after unburrow."
+CONNECT
+chmod +x /usr/local/bin/connect-claude
+
 # --- SSHD: disable password authentication ---
 echo "PasswordAuthentication no" >> /etc/ssh/sshd_config
 echo "KbdInteractiveAuthentication no" >> /etc/ssh/sshd_config
@@ -237,6 +343,12 @@ A request for a repo that is not connected is refused with an explanation on std
 If the repo is connected but GitHub still refuses (404, "Resource not accessible by integration"),
 the hatchery GitHub App is not installed on that repo/org or lacks the permission. Tell the user;
 do not work around it.
+
+## Claude auth
+
+This drone talks to the model with an inference-only token (`CLAUDE_CODE_OAUTH_TOKEN`, set up with
+`connect-claude`). NEVER run `/login` or ask the user to approve a Claude login link — that would
+give the drone the user's whole account. If the token is missing, tell the user to run `connect-claude`.
 CLAUDEMD
   chown -R 1000:1000 "$CLAUDE_DIR" 2>/dev/null || true
 fi

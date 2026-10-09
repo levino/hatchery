@@ -101,6 +101,22 @@ sequenceDiagram
     Script-->>Tool: credentials / GH_TOKEN
 ```
 
+### Claude Code Auth (inference only)
+
+Drones get model access, nothing else from your Anthropic account. Inside a drone, run:
+
+```bash
+connect-claude              # runs `claude setup-token`, you paste the token (hidden input)
+connect-claude --status     # stored? since when? (tokens last one year)
+connect-claude --disconnect # forget it
+```
+
+- `claude setup-token` requests only the OAuth scope `user:inference`: no claude.ai connectors, no profile, no sessions. Anthropic enforces that on the token, so a compromised agent can't widen it.
+- The token lives in RAM (`/dev/shm/hatchery-claude-<uid>/token`, mode 0600), never on disk, and is gone when the drone stops. Run `connect-claude` again after `unburrow`.
+- Every new shell (bash and zsh) exports it as `CLAUDE_CODE_OAUTH_TOKEN`; it outranks any `/login` session.
+- A managed policy (`/etc/claude-code/managed-settings.d/50-hatchery.json`) sets `disableClaudeAiConnectors` as a second line of defense.
+- Don't `/login` in a drone: it would write a full-scope login into the bind-mounted `CLAUDE_CONFIG_DIR`, i.e. onto the host. `hatchery list` and `hatchery status` flag drones that have one.
+
 ### Git Worktree Support
 
 Hatchery mounts the `worktrees/` directory into the container, enabling `git worktree` usage where all worktrees are persisted on the host.

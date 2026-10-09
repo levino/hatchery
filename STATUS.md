@@ -15,6 +15,8 @@
 
 - **Credential script installation on fresh spawn**: the `printf`-based injection via `docker exec` was rewritten but not yet end-to-end tested on a clean spawn. Manually verified working inside a running container.
 
+- **`connect-claude` (feature 1.9.0)**: shellchecked and env snippet tested in sh/bash, but not yet run in a real drone (zsh path, `claude setup-token` paste flow, managed policy pickup).
+
 ## Known Issues
 
 - **SSH user mismatch**: SSH config uses `User vscode` but some images use `node` as UID 1000. SSH key injection targets UID 1000 regardless, but the SSH `User` must match the actual username.
