@@ -1,8 +1,8 @@
 {
   "id": "hatchery",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "name": "Hatchery Drone Setup",
-  "description": "SSH keys, Tailscale join, git/gh credential helpers",
+  "description": "SSH keys, Tailscale join, git/gh credential helpers, inference-only Claude auth",
   "installsAfter": [
     "ghcr.io/devcontainers/features/github-cli",
     "ghcr.io/devcontainers/features/node"

@@ -31,6 +31,7 @@ See [README.md](README.md) for full architecture docs.
 - **git**: credential helper curls socket → gets GitHub App installation token
 - **gh CLI**: wrapper sets `GH_TOKEN` from socket before calling real `gh`
 - **Scope**: the socket only serves tokens for the drone's connected repos (`?repo=`/`?org=` are checked in `src/creds/scope.ts`, else HTTP 403). The repo list lives in `~/.hatchery/sockets/<drone>.repos.json`, outside the drone's mount
+- **Claude Code**: inference-only token from `claude setup-token` (scope `user:inference`), stored by `connect-claude` on tmpfs (`/dev/shm/hatchery-claude-<uid>/token`) and exported as `CLAUDE_CODE_OAUTH_TOKEN` via `/etc/hatchery-claude-env.sh` (sourced from profile.d, zshenv, bash.bashrc). Never `/login` in a drone — it lands in `~/.hatchery/repos/<drone>/worktrees/.claude/.credentials.json` on the host; `list`/`status` warn about it (`src/claude-auth.ts`)
 - **SSH→HTTPS rewrite**: `git config url."https://github.com/".insteadOf "git@github.com:"` so SSH clone URLs work with the HTTPS credential helper
 
 ### Key Files
