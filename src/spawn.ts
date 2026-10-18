@@ -14,7 +14,7 @@ import {
   LABEL_DRONE,
   LABEL_REPO,
 } from "./docker.ts";
-import type { Config } from "./config.ts";
+import type { Config, ForgejoHost } from "./config.ts";
 import { msg, HatcheryError } from "./zerg.ts";
 import { randomBytes } from "node:crypto";
 
