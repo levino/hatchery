@@ -48,13 +48,16 @@ program
   .option("--kvm", "Pass /dev/kvm into the drone (Android emulators, VMs)")
   .option("--github <repos>", "Additional GitHub repos for a Forgejo drone (comma-separated org/repo)")
   .option("--hostname <hostname>", "Override Tailscale hostname for the drone")
+  .option("--timeout <minutes>", "Minutes to wait for the container to start, including the image build", "15")
   .description("Spawn a new drone from a repository")
-  .action(async (repo: string, opts: { repos?: string; hostname?: string; kvm?: boolean; github?: string }) => {
+  .action(async (repo: string, opts: { repos?: string; hostname?: string; kvm?: boolean; github?: string; timeout: string }) => {
     const config = loadConfig();
     const docker = createClient();
     const extraRepos = opts.repos ? opts.repos.split(",").map((r: string) => r.trim()) : [];
     const githubRepos = opts.github ? opts.github.split(",").map((r: string) => r.trim()).filter(Boolean) : [];
-    await spawn(docker, repo, config, extraRepos, opts.hostname, opts.kvm ?? false, githubRepos);
+    const timeoutMinutes = Number(opts.timeout);
+    if (!(timeoutMinutes > 0)) throw new Error("--timeout must be a positive number of minutes");
+    await spawn(docker, repo, config, extraRepos, opts.hostname, opts.kvm ?? false, githubRepos, timeoutMinutes);
   });
 
 program

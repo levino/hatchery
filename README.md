@@ -142,7 +142,7 @@ The worktree lives alongside the main clone on the host filesystem, surviving co
 
 | Command | Action |
 |---|---|
-| `hatchery spawn <org/repo>` | Clone, build, and start a drone |
+| `hatchery spawn <org/repo>` | Clone, build, and start a drone (`--timeout <minutes>`, default 15, includes the image build) |
 | `hatchery spawn <local-path>` | Spawn from a local directory |
 | `hatchery list` | List all drones |
 | `hatchery status <org/repo>` | Show drone details |

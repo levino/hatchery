@@ -221,7 +221,7 @@ function getRemoteUser(configPath: string): string {
   return "root";
 }
 
-export async function spawn(docker: Docker, repoArg: string, config: Config, extraRepos: string[] = [], tsHostname?: string, kvm = false, githubRepos: string[] = []) {
+export async function spawn(docker: Docker, repoArg: string, config: Config, extraRepos: string[] = [], tsHostname?: string, kvm = false, githubRepos: string[] = [], timeoutMinutes = 15) {
   const parsed = parseRepoArg(repoArg, config);
   const name = parsed.name;
 
@@ -353,7 +353,7 @@ export async function spawn(docker: Docker, repoArg: string, config: Config, ext
   if (parsed.provider === "github") {
     writeRepos(config.socketDir, name, [parsed.repo, ...extraRepos]);
   }
-  await devcontainerUp(docker, repoDir, workspaceDir, devcontainerConfig, name, allRepos, config, remoteEnvs, globalHostKey, kvm);
+  await devcontainerUp(docker, repoDir, workspaceDir, devcontainerConfig, name, allRepos, config, remoteEnvs, globalHostKey, kvm, timeoutMinutes);
 
   // Run lifecycle commands (postCreateCommand, postStartCommand, dotfiles, etc.)
   // If the project's updateContentCommand fails, devcontainer skips postStartCommand entirely,
@@ -385,6 +385,7 @@ async function devcontainerUp(
   remoteEnvs: [string, string][],
   globalHostKey: string,
   kvm = false,
+  timeoutMinutes = 15,
 ): Promise<void> {
   const devcontainerBin = resolve("node_modules/.bin/devcontainer");
 
@@ -447,7 +448,7 @@ async function devcontainerUp(
   child.unref();
 
   // Poll until the container is running
-  const deadline = Date.now() + 300_000;
+  const deadline = Date.now() + timeoutMinutes * 60_000;
   while (Date.now() < deadline) {
     const drone = await findDrone(docker, name);
     if (drone && drone.state === "running") {
@@ -462,7 +463,7 @@ async function devcontainerUp(
 
   try { process.kill(-child.pid!, "SIGTERM"); } catch {}
   localFeatureCleanup?.();
-  throw new HatcheryError(msg.spawnTimeout);
+  throw new HatcheryError(msg.spawnTimeout(timeoutMinutes));
 }
 
 async function runPostStart(

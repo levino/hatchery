@@ -28,8 +28,8 @@ export const msg = {
   socketRemoved: "Extractor offline.",
   tokenRefreshed: "Essence absorbed.",
   recovering: "Rebuilding creep network...",
-  spawnTimeout:
-    "Container did not start within 5 minutes. Check Docker logs for details.\n  Drone lost in the Nydus Network — spawning sequence timed out.",
+  spawnTimeout: (minutes: number) =>
+    `Container did not start within ${minutes} minutes (raise with --timeout). Check Docker logs for details.\n  Drone lost in the Nydus Network — spawning sequence timed out.`,
   updating: "Absorbing latest mutations...",
   updateFailed: "Pull failed — spawning with existing genetic material. Adapt or perish.",
   noEvolutionPlan:
