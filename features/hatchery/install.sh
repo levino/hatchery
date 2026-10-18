@@ -241,25 +241,37 @@ The consent page should ask for model access only. If it asks for connectors
 or your profile, abort: that is a full login, not an inference-only token.
 
 EOF
-env -u CLAUDE_CODE_OAUTH_TOKEN claude setup-token
-
-echo
-trap 'stty echo 2>/dev/null || true' EXIT INT TERM
-printf 'Paste the token it printed (input hidden): '
-stty -echo 2>/dev/null || true
-IFS= read -r TOKEN || true
-stty echo 2>/dev/null || true
-echo
-TOKEN=$(printf '%s' "$TOKEN" | tr -d '[:space:]')
-[ -n "$TOKEN" ] || { echo "No token entered, nothing stored." >&2; exit 1; }
-case "$TOKEN" in
-  sk-ant-oat*) ;;
-  *) echo "Note: that doesn't look like a setup-token token (sk-ant-oat…). Storing it anyway." >&2 ;;
-esac
-
 umask 077
 mkdir -p "$DIR"
 chmod 700 "$DIR"
+LOG="$DIR/setup-token.log"
+trap 'rm -f "$LOG"; stty echo 2>/dev/null || true' EXIT INT TERM
+# setup-token only prints the token, it stores nothing. Record the session on
+# tmpfs and read the token from it, so it isn't pasted a second time (people
+# paste the login code again by mistake).
+script -q -e -c 'env -u CLAUDE_CODE_OAUTH_TOKEN claude setup-token' "$LOG"
+# Strip escape sequences, then join the token's wrapped lines up to the next
+# blank line.
+TOKEN=$(sed 's/\x1b\[[0-9;?]*[A-Za-z~]//g; s/\x1b[]()][^\x07\x1b]*//g; s/\r//g' "$LOG" \
+  | awk '/sk-ant-oat/ { t = 1; sub(/.*sk-ant-oat/, "sk-ant-oat") } t && /^[[:space:]]*$/ { exit } t { gsub(/[[:space:]]/, ""); printf "%s", $0 }')
+rm -f "$LOG"
+
+if [ "${#TOKEN}" -lt 80 ]; then
+  echo
+  echo "Could not read the token from the output."
+  printf 'Paste the token it printed, sk-ant-oat... (input hidden): '
+  stty -echo 2>/dev/null || true
+  IFS= read -r TOKEN || true
+  stty echo 2>/dev/null || true
+  echo
+  # Drop bracketed-paste markers, arrow keys and whitespace.
+  TOKEN=$(printf '%s' "$TOKEN" | sed 's/\x1b\[[0-9;?]*[A-Za-z~]//g' | tr -d '[:space:]')
+fi
+case "$TOKEN" in
+  sk-ant-oat*) ;;
+  *) echo "That is not a setup-token token (sk-ant-oat...), nothing stored." >&2; exit 1 ;;
+esac
+
 printf '%s' "$TOKEN" > "$TOKEN_FILE"
 date -u +%Y-%m-%d > "$DIR/created"
 
