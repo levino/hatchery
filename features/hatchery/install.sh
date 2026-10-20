@@ -251,9 +251,10 @@ trap 'rm -f "$LOG"; stty echo 2>/dev/null || true' EXIT INT TERM
 # paste the login code again by mistake).
 script -q -e -c 'env -u CLAUDE_CODE_OAUTH_TOKEN claude setup-token' "$LOG"
 # Strip escape sequences, then join the token's wrapped lines up to the next
-# blank line.
+# blank line or the "Store this token securely" hint that follows it.
 TOKEN=$(sed 's/\x1b\[[0-9;?]*[A-Za-z~]//g; s/\x1b[]()][^\x07\x1b]*//g; s/\r//g' "$LOG" \
-  | awk '/sk-ant-oat/ { t = 1; sub(/.*sk-ant-oat/, "sk-ant-oat") } t && /^[[:space:]]*$/ { exit } t { gsub(/[[:space:]]/, ""); printf "%s", $0 }')
+  | awk '/sk-ant-oat/ { t = 1; sub(/.*sk-ant-oat/, "sk-ant-oat") } t && /^[[:space:]]*$/ { exit } t && /Store this token/ { sub(/Store this token.*/, ""); gsub(/[[:space:]]/, ""); printf "%s", $0; exit } t { gsub(/[[:space:]]/, ""); printf "%s", $0 }' \
+  | tr -cd 'A-Za-z0-9_-')
 rm -f "$LOG"
 
 if [ "${#TOKEN}" -lt 80 ]; then
@@ -264,8 +265,10 @@ if [ "${#TOKEN}" -lt 80 ]; then
   IFS= read -r TOKEN || true
   stty echo 2>/dev/null || true
   echo
-  # Drop bracketed-paste markers, arrow keys and whitespace.
-  TOKEN=$(printf '%s' "$TOKEN" | sed 's/\x1b\[[0-9;?]*[A-Za-z~]//g' | tr -d '[:space:]')
+  # Drop bracketed-paste markers, arrow keys and whitespace, and the
+  # "Store this token securely..." hint if it was copied along.
+  TOKEN=$(printf '%s' "$TOKEN" | sed 's/\x1b\[[0-9;?]*[A-Za-z~]//g' | tr -d '[:space:]' \
+    | sed 's/Storethistoken.*//' | tr -cd 'A-Za-z0-9_-')
 fi
 case "$TOKEN" in
   sk-ant-oat*) ;;
