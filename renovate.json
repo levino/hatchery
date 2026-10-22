@@ -1,0 +1,49 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Renovate (Mend-App) hält npm, das Docker-Basis-Image und GitHub Actions aktuell. Renovate merged selbst nur, wenn Checks am Branch laufen und grün sind; die Integrationstests sind pfadgefiltert, PRs ohne Check bleiben offen.",
+  "extends": [
+    "config:recommended",
+    ":disableDependencyDashboard"
+  ],
+  "timezone": "Europe/Berlin",
+  "labels": [
+    "dependencies"
+  ],
+  "osvVulnerabilityAlerts": true,
+  "prHourlyLimit": 0,
+  "prConcurrentLimit": 20,
+  "automerge": true,
+  "platformAutomerge": false,
+  "packageRules": [
+    {
+      "description": "Basis-Images und Actions per Digest pinnen: nur so sieht Renovate, dass z. B. node:26-alpine mit einem Node-Sicherheitsfix neu gebaut wurde. Diese Updates kommen sofort, nicht nach Zeitplan.",
+      "matchManagers": [
+        "dockerfile",
+        "devcontainer",
+        "github-actions"
+      ],
+      "pinDigests": true
+    },
+    {
+      "description": "Routine-npm-Updates als ein Sammel-PR pro Woche. Sicherheitsfixes ignorieren den Zeitplan.",
+      "matchManagers": [
+        "npm"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "groupName": "npm minor-and-patch",
+      "schedule": [
+        "before 6am on monday"
+      ]
+    },
+    {
+      "description": "Keine Major-PRs. Majors erst, wenn der Support der genutzten Version endet.",
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "enabled": false
+    }
+  ]
+}
