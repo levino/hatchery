@@ -164,6 +164,9 @@ else
 fi
 
 # --- Claude Code auth: inference-only token, never an account login ---
+# Unless the host opts this drone into a full login: `hatchery claude-auth
+# <drone> login` writes /etc/hatchery-claude-auth and drops the managed setting
+# below. The env script and connect-claude stand down when that file says login.
 # A drone gets model access from a `claude setup-token` token, which carries
 # only the OAuth scope user:inference — no connectors, no profile, no
 # sessions — and that limit is enforced by Anthropic, not by the drone.
@@ -178,7 +181,7 @@ echo '{ "disableClaudeAiConnectors": true }' > /etc/claude-code/managed-settings
 cat > /etc/hatchery-claude-env.sh <<'ENV'
 # Export this drone's inference-only Claude token, if connect-claude has run.
 _hatchery_ct="/dev/shm/hatchery-claude-$(id -u)/token"
-if [ -r "$_hatchery_ct" ]; then
+if [ -r "$_hatchery_ct" ] && [ "$(cat /etc/hatchery-claude-auth 2>/dev/null)" != login ]; then
   CLAUDE_CODE_OAUTH_TOKEN=$(cat "$_hatchery_ct")
   export CLAUDE_CODE_OAUTH_TOKEN
 fi
@@ -225,6 +228,12 @@ case "${1:-}" in
     exit 2
     ;;
 esac
+
+if [ "$(cat /etc/hatchery-claude-auth 2>/dev/null)" = login ]; then
+  echo "This drone is set to log in with your Claude account: run claude, then /login." >&2
+  echo "Back to the inference-only token: 'hatchery claude-auth <drone> token' on the host." >&2
+  exit 1
+fi
 
 command -v claude >/dev/null 2>&1 || { echo "Claude Code is not installed in this drone." >&2; exit 1; }
 

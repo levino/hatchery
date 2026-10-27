@@ -21,7 +21,14 @@ import {
 import { spawn, normalizeRepoArg } from "./spawn.ts";
 import { defaultSocketDir, hasWork, listOrphans, removePath, reposDir } from "./gc.ts";
 import { msg, status, HatcheryError } from "./zerg.ts";
-import { accountLoginPath, hasAccountLogin } from "./claude-auth.ts";
+import {
+  accountLoginPath,
+  applyClaudeAuth,
+  hasAccountLogin,
+  parseClaudeAuthMode,
+  readClaudeAuthMode,
+  writeClaudeAuthMode,
+} from "./claude-auth.ts";
 
 /** Resolve a CLI argument to the drone name, handling local paths, org/repo, and host/org/repo. */
 function resolveDroneName(repo: string): string {
@@ -49,21 +56,24 @@ program
   .option("--github <repos>", "Additional GitHub repos for a Forgejo drone (comma-separated org/repo)")
   .option("--hostname <hostname>", "Override Tailscale hostname for the drone")
   .option("--timeout <minutes>", "Minutes to wait for the container to start, including the image build", "15")
+  .option("--claude-auth <mode>", "Claude Code auth: token (connect-claude, default) or login (/login, full account)")
   .description("Spawn a new drone from a repository")
-  .action(async (repo: string, opts: { repos?: string; hostname?: string; kvm?: boolean; github?: string; timeout: string }) => {
+  .action(async (repo: string, opts: { repos?: string; hostname?: string; kvm?: boolean; github?: string; timeout: string; claudeAuth?: string }) => {
     const config = loadConfig();
     const docker = createClient();
     const extraRepos = opts.repos ? opts.repos.split(",").map((r: string) => r.trim()) : [];
     const githubRepos = opts.github ? opts.github.split(",").map((r: string) => r.trim()).filter(Boolean) : [];
     const timeoutMinutes = Number(opts.timeout);
     if (!(timeoutMinutes > 0)) throw new Error("--timeout must be a positive number of minutes");
-    await spawn(docker, repo, config, extraRepos, opts.hostname, opts.kvm ?? false, githubRepos, timeoutMinutes);
+    const claudeAuth = opts.claudeAuth ? parseClaudeAuthMode(opts.claudeAuth) : undefined;
+    await spawn(docker, repo, config, extraRepos, opts.hostname, opts.kvm ?? false, githubRepos, timeoutMinutes, claudeAuth);
   });
 
 program
   .command("list")
   .description("List all drones in the hive")
   .action(async () => {
+    const config = loadConfig();
     const docker = createClient();
     const drones = await listDrones(docker);
     if (drones.length === 0) {
@@ -72,7 +82,8 @@ program
     }
     for (const d of drones) {
       console.log(status(d.name, d.state));
-      if (hasAccountLogin(d.name)) console.log(msg.accountLogin(accountLoginPath(d.name)));
+      const mode = readClaudeAuthMode(config.socketDir, d.name);
+      if (mode === "token" && hasAccountLogin(d.name)) console.log(msg.accountLogin(accountLoginPath(d.name)));
     }
   });
 
@@ -81,6 +92,7 @@ program
   .argument("<org/repo>", "GitHub repository")
   .description("Show status of a specific drone")
   .action(async (repo: string) => {
+    const config = loadConfig();
     const docker = createClient();
     const name = resolveDroneName(repo);
     const d = await findDrone(docker, name);
@@ -88,10 +100,12 @@ program
       console.error(msg.droneNotFound);
       process.exit(1);
     }
+    const mode = readClaudeAuthMode(config.socketDir, d.name);
     console.log(status(d.name, d.state));
     console.log(`  Repo:      ${d.repo}`);
     console.log(`  Container: ${d.id.slice(0, 12)}`);
-    if (hasAccountLogin(d.name)) console.log(msg.accountLogin(accountLoginPath(d.name)));
+    console.log(`  Claude:    ${mode}`);
+    if (mode === "token" && hasAccountLogin(d.name)) console.log(msg.accountLogin(accountLoginPath(d.name)));
   });
 
 program
@@ -124,6 +138,8 @@ program
       process.exit(1);
     }
     await startDrone(docker, d.id);
+    // Catches a mode that was switched while the drone was burrowed.
+    await applyClaudeAuth(docker, { ...d, state: "running" }, readClaudeAuthMode(config.socketDir, name));
 
     // Re-authenticate tailscale — env vars from initial `devcontainer up` are
     // not persisted in the container config, so after a host reboot the drone
@@ -201,6 +217,30 @@ program
     }
   });
 
+
+program
+  .command("claude-auth")
+  .argument("<org/repo>", "Drone identifier (org/repo or local path)")
+  .argument("[mode]", "token (connect-claude, inference only) or login (/login, full account)")
+  .description("Show or set how Claude Code authenticates in a drone")
+  .action(async (repo: string, modeArg?: string) => {
+    const config = loadConfig();
+    const docker = createClient();
+    const name = resolveDroneName(repo);
+    const d = await findDrone(docker, name);
+    if (!d) {
+      console.error(msg.droneNotFound);
+      process.exit(1);
+    }
+    if (!modeArg) {
+      console.log(readClaudeAuthMode(config.socketDir, name));
+      return;
+    }
+    const mode = parseClaudeAuthMode(modeArg);
+    writeClaudeAuthMode(config.socketDir, name, mode);
+    await applyClaudeAuth(docker, d, mode);
+    console.log(msg.claudeAuthSet(mode, d.state !== "running"));
+  });
 
 program
   .command("slay")

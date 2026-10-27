@@ -90,7 +90,8 @@ export async function listOrphans(docker: Docker, socketDir: string): Promise<Or
   for (const name of [...names].sort()) {
     if (live.has(name)) continue;
     const droneDir = join(reposDir, name);
-    const paths = [droneDir, join(socketDir, name), reposFilePath(socketDir, name)]
+    // `<drone>.claude-auth` is claudeAuthFilePath() — not imported, claude-auth.ts imports this module.
+    const paths = [droneDir, join(socketDir, name), reposFilePath(socketDir, name), join(socketDir, `${name}.claude-auth`)]
       .filter((p) => existsSync(p));
     orphans.push({ name, paths, ...inspectWorktrees(droneDir) });
   }
