@@ -158,6 +158,11 @@ export function tailscaleHostname(name: string): string {
   return out.length <= 63 ? out : out.slice(-63).replace(/^-+/, "");
 }
 
+/** Absolute, ./ or ../ (or bare . / ..) arguments are paths, never org/repo. */
+export function looksLikePath(arg: string): boolean {
+  return arg.startsWith("/") || arg.startsWith("./") || arg.startsWith("../") || arg === "." || arg === "..";
+}
+
 export function parseRepoArg(repoArg: string, config: Config): ParsedRepo {
   const localPath = resolve(repoArg);
   if (existsSync(localPath)) {
@@ -166,6 +171,10 @@ export function parseRepoArg(repoArg: string, config: Config): ParsedRepo {
       repo: repoArg,
       name: `hatchery-${basename(localPath)}`,
     };
+  }
+
+  if (looksLikePath(repoArg)) {
+    throw new HatcheryError(`Local path "${repoArg}" does not exist (resolved to ${localPath})`);
   }
 
   repoArg = normalizeRepoArg(repoArg) ?? repoArg;

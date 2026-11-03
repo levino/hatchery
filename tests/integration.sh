@@ -4,7 +4,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-TEST_REPO="$REPO_ROOT/test-repo"
+TEST_ROOT="$(mktemp -d)"
+TEST_REPO="$TEST_ROOT/test-repo"
 HEADSCALE_IMAGE="headscale/headscale:0.23.0-alpha12"
 HEADSCALE_CONTAINER="hatchery-test-headscale"
 DRONE_NAME="hatchery-test-repo"
@@ -18,6 +19,7 @@ info() { echo -e "${YELLOW}→${NC} $1"; }
 
 cleanup() {
   info "Cleaning up..."
+  rm -rf "$TEST_ROOT" 2>/dev/null || true
   docker ps --filter "label=hatchery.drone=$DRONE_NAME" -q | xargs -r docker rm -f 2>/dev/null || true
   sudo rm -rf "$HOME/.hatchery/sockets/$DRONE_NAME" 2>/dev/null || rm -rf "$HOME/.hatchery/sockets/$DRONE_NAME" 2>/dev/null || true
   docker rm -f "$HEADSCALE_CONTAINER" 2>/dev/null || true
@@ -32,6 +34,19 @@ cd "$REPO_ROOT"
 docker ps --filter "label=hatchery.drone=$DRONE_NAME" -q | xargs -r docker rm -f 2>/dev/null || true
 docker rm -f "$HEADSCALE_CONTAINER" 2>/dev/null || true
 docker volume rm hatchery-test-headscale-data 2>/dev/null || true
+
+# ── Fixture: a minimal standalone git repo with a devcontainer ───────────────
+# Must be its own git repo (spawn clones it), so it lives outside the checkout.
+mkdir -p "$TEST_REPO/.devcontainer"
+cat > "$TEST_REPO/.devcontainer/devcontainer.json" <<'EOF'
+{
+  "name": "hatchery-test-repo",
+  "image": "mcr.microsoft.com/devcontainers/base:bookworm"
+}
+EOF
+git -C "$TEST_REPO" init -q
+git -C "$TEST_REPO" add -A
+git -C "$TEST_REPO" -c user.name=test -c user.email=test@example.com commit -q -m "test fixture"
 
 # ── 0. Minimal config.json for CI (no GitHub App needed for spawn test) ──────
 if [ -f config.json ]; then
