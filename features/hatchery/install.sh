@@ -164,6 +164,9 @@ else
 fi
 
 # --- Claude Code auth: inference-only token, never an account login ---
+# Unless the host opts this drone into a full login: `hatchery claude-auth
+# <drone> login` writes /etc/hatchery-claude-auth and drops the managed setting
+# below. The env script and connect-claude stand down when that file says login.
 # A drone gets model access from a `claude setup-token` token, which carries
 # only the OAuth scope user:inference — no connectors, no profile, no
 # sessions — and that limit is enforced by Anthropic, not by the drone.
@@ -178,7 +181,7 @@ echo '{ "disableClaudeAiConnectors": true }' > /etc/claude-code/managed-settings
 cat > /etc/hatchery-claude-env.sh <<'ENV'
 # Export this drone's inference-only Claude token, if connect-claude has run.
 _hatchery_ct="/dev/shm/hatchery-claude-$(id -u)/token"
-if [ -r "$_hatchery_ct" ]; then
+if [ -r "$_hatchery_ct" ] && [ "$(cat /etc/hatchery-claude-auth 2>/dev/null)" != login ]; then
   CLAUDE_CODE_OAUTH_TOKEN=$(cat "$_hatchery_ct")
   export CLAUDE_CODE_OAUTH_TOKEN
 fi
@@ -195,7 +198,7 @@ for rc in /etc/zsh/zshenv /etc/bash.bashrc; do
 done
 
 cat > /usr/local/bin/connect-claude <<'CONNECT'
-#!/bin/sh
+#!/bin/bash
 # connect-claude — give this drone model access with an inference-only token.
 #   connect-claude               run `claude setup-token`, store the token
 #   connect-claude --status      show whether a token is stored, and its age
@@ -226,6 +229,12 @@ case "${1:-}" in
     ;;
 esac
 
+if [ "$(cat /etc/hatchery-claude-auth 2>/dev/null)" = login ]; then
+  echo "This drone is set to log in with your Claude account: run claude, then /login." >&2
+  echo "Back to the inference-only token: 'hatchery claude-auth <drone> token' on the host." >&2
+  exit 1
+fi
+
 command -v claude >/dev/null 2>&1 || { echo "Claude Code is not installed in this drone." >&2; exit 1; }
 
 CREDS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json"
@@ -238,28 +247,53 @@ fi
 cat <<'EOF'
 Running `claude setup-token`. Open the link, approve, and paste the code back.
 The consent page should ask for model access only. If it asks for connectors
-or your profile, abort: that is a full login, not an inference-only token.
+or your profile, abort with Ctrl+C: that is a full login, not an
+inference-only token.
 
 EOF
-env -u CLAUDE_CODE_OAUTH_TOKEN claude setup-token
-
-echo
-trap 'stty echo 2>/dev/null || true' EXIT INT TERM
-printf 'Paste the token it printed (input hidden): '
-stty -echo 2>/dev/null || true
-IFS= read -r TOKEN || true
-stty echo 2>/dev/null || true
-echo
-TOKEN=$(printf '%s' "$TOKEN" | tr -d '[:space:]')
-[ -n "$TOKEN" ] || { echo "No token entered, nothing stored." >&2; exit 1; }
-case "$TOKEN" in
-  sk-ant-oat*) ;;
-  *) echo "Note: that doesn't look like a setup-token token (sk-ant-oat…). Storing it anyway." >&2 ;;
-esac
-
 umask 077
 mkdir -p "$DIR"
 chmod 700 "$DIR"
+LOG="$DIR/setup-token.log"
+export DONE="$DIR/setup-token.done"
+rm -f "$DONE"
+trap 'rm -f "$LOG" "$DONE"; stty echo 2>/dev/null || true' EXIT
+trap 'echo; echo "Aborted, nothing stored."; exit 130' INT TERM
+# setup-token only prints the token, it stores nothing. Record the session on
+# tmpfs and read the token from it, so it isn't pasted a second time (people
+# paste the login code again by mistake).
+# setup-token ignores Ctrl+C, and `script` would put the terminal in raw mode,
+# so there was no way out. Feed it line by line from the terminal in cooked
+# mode instead: Ctrl+C stays a signal, and Enter is sent as the \r it expects.
+while [ ! -e "$DONE" ]; do
+  if IFS= read -r -t 1 line; then printf '%s\r' "$line"; fi
+done < /dev/tty \
+  | script -q -e -c 'env -u CLAUDE_CODE_OAUTH_TOKEN claude setup-token; touch "$DONE"' "$LOG"
+# Strip escape sequences, then join the token's wrapped lines up to the next
+# blank line or the "Store this token securely" hint that follows it.
+TOKEN=$(sed 's/\x1b\[[0-9;?]*[A-Za-z~]//g; s/\x1b[]()][^\x07\x1b]*//g; s/\r//g' "$LOG" \
+  | awk '/sk-ant-oat/ { t = 1; sub(/.*sk-ant-oat/, "sk-ant-oat") } t && /^[[:space:]]*$/ { exit } t && /Store this token/ { sub(/Store this token.*/, ""); gsub(/[[:space:]]/, ""); printf "%s", $0; exit } t { gsub(/[[:space:]]/, ""); printf "%s", $0 }' \
+  | tr -cd 'A-Za-z0-9_-')
+rm -f "$LOG"
+
+if [ "${#TOKEN}" -lt 80 ]; then
+  echo
+  echo "Could not read the token from the output."
+  printf 'Paste the token it printed, sk-ant-oat... (input hidden): '
+  stty -echo 2>/dev/null || true
+  IFS= read -r TOKEN || true
+  stty echo 2>/dev/null || true
+  echo
+  # Drop bracketed-paste markers, arrow keys and whitespace, and the
+  # "Store this token securely..." hint if it was copied along.
+  TOKEN=$(printf '%s' "$TOKEN" | sed 's/\x1b\[[0-9;?]*[A-Za-z~]//g' | tr -d '[:space:]' \
+    | sed 's/Storethistoken.*//' | tr -cd 'A-Za-z0-9_-')
+fi
+case "$TOKEN" in
+  sk-ant-oat*) ;;
+  *) echo "That is not a setup-token token (sk-ant-oat...), nothing stored." >&2; exit 1 ;;
+esac
+
 printf '%s' "$TOKEN" > "$TOKEN_FILE"
 date -u +%Y-%m-%d > "$DIR/created"
 

@@ -211,7 +211,7 @@ export async function removeDrone(
   const volumes = (info.Mounts ?? [])
     .filter((m: { Type: string; Name?: string; Destination?: string }) =>
       m.Type === "volume" && m.Name && !m.Name.startsWith("ssh-host-keys-"))
-    .map((m: { Name: string }) => m.Name);
+    .map((m: { Name?: string }) => m.Name as string);
   await container.remove({ force: true });
   for (const vol of volumes) {
     try {

@@ -14,9 +14,10 @@ import {
   LABEL_DRONE,
   LABEL_REPO,
 } from "./docker.ts";
-import type { Config } from "./config.ts";
+import type { Config, ForgejoHost } from "./config.ts";
 import { msg, HatcheryError } from "./zerg.ts";
 import { randomBytes } from "node:crypto";
+import { applyClaudeAuth, claudeAuthSection, readClaudeAuthMode, writeClaudeAuthMode, type ClaudeAuthMode } from "./claude-auth.ts";
 
 const HATCHERY_DIR = join(homedir(), ".hatchery", "repos");
 
@@ -221,7 +222,7 @@ function getRemoteUser(configPath: string): string {
   return "root";
 }
 
-export async function spawn(docker: Docker, repoArg: string, config: Config, extraRepos: string[] = [], tsHostname?: string, kvm = false, githubRepos: string[] = []) {
+export async function spawn(docker: Docker, repoArg: string, config: Config, extraRepos: string[] = [], tsHostname?: string, kvm = false, githubRepos: string[] = [], timeoutMinutes = 15, claudeAuth?: ClaudeAuthMode) {
   const parsed = parseRepoArg(repoArg, config);
   const name = parsed.name;
 
@@ -229,6 +230,11 @@ export async function spawn(docker: Docker, repoArg: string, config: Config, ext
   if (existing) {
     throw new HatcheryError(msg.droneExists);
   }
+
+  // An explicit --claude-auth is remembered; without it a respawn keeps the
+  // mode the drone had before it was slain.
+  if (claudeAuth) writeClaudeAuthMode(config.socketDir, name, claudeAuth);
+  else claudeAuth = readClaudeAuthMode(config.socketDir, name);
 
   // Ensure per-drone sockets dir exists for bind mount
   const droneSocketDir = join(config.socketDir, name);
@@ -344,7 +350,7 @@ export async function spawn(docker: Docker, repoArg: string, config: Config, ext
   if (!existsSync(claudeMdPath)) {
     const org = parsed.provider === "github" ? parsed.repo.split("/")[0] : null;
     const orgLine = org ? `Default org for this drone: \`${org}\`.\n` : "";
-    writeFileSync(claudeMdPath, `# Hatchery Drone — Credential System\n\n## GitHub credentials — how it works\n\nYou are inside a Hatchery drone. GitHub access works via a Unix socket at \`/var/run/hatchery-sockets/creds.sock\`. Credentials are automatic — you do NOT need to log in or set tokens manually.\n\n## git (clone, push, pull)\n\nJust works. The credential helper fetches the right token automatically. Do nothing.\n\n## gh CLI\n\nThe \`gh\` wrapper at \`/usr/local/bin/gh\` fetches a token automatically based on the target org. Use it normally:\n\n\`\`\`sh\ngh pr list --repo org/repo\ngh api repos/org/repo\n\`\`\`\n\n${orgLine}The wrapper detects the org from \`--repo\`/\`-R\` or from \`git remote origin\` in the current directory.\n\n## Which repos you can reach\n\nTokens only cover the GitHub repos connected to this drone (its own repo plus any added with \`hatchery repo connect\`). A request for any other repo is refused with HTTP 403 and an explanation on stderr. If you need such a repo, tell the user to run on the hatchery host:\n\n\`\`\`sh\nhatchery repo connect <this-drone-repo> <org/repo>\n\`\`\`\n\n(with \`--github\` if this drone lives on Forgejo). Never work around a denial.\n\n## If gh fails\n\nThe wrapper prints the reason on stderr. To debug, fetch a token by hand:\n\n\`\`\`sh\n/usr/local/bin/hatchery-token org=<org>\n\`\`\`\n\n## NEVER do these\n\n- \`gh auth login\`\n- \`export GH_TOKEN=...\` with a hardcoded value\n- Storing tokens anywhere\n- Using any other credentials to reach a repo that is not connected\n\n## 403 "Resource not accessible by integration"\n\nThe GitHub App lacks permission for this operation (e.g. creating repos), or is not installed on that repo/org. Tell the user — do not work around it.\n\n## Claude auth\n\nThis drone talks to the model with an inference-only token (\`CLAUDE_CODE_OAUTH_TOKEN\`, set up with \`connect-claude\`). NEVER run \`/login\` or ask the user to approve a Claude login link — that would give the drone the user's whole account. If the token is missing, tell the user to run \`connect-claude\` in the drone.\n`);
+    writeFileSync(claudeMdPath, `# Hatchery Drone — Credential System\n\n## GitHub credentials — how it works\n\nYou are inside a Hatchery drone. GitHub access works via a Unix socket at \`/var/run/hatchery-sockets/creds.sock\`. Credentials are automatic — you do NOT need to log in or set tokens manually.\n\n## git (clone, push, pull)\n\nJust works. The credential helper fetches the right token automatically. Do nothing.\n\n## gh CLI\n\nThe \`gh\` wrapper at \`/usr/local/bin/gh\` fetches a token automatically based on the target org. Use it normally:\n\n\`\`\`sh\ngh pr list --repo org/repo\ngh api repos/org/repo\n\`\`\`\n\n${orgLine}The wrapper detects the org from \`--repo\`/\`-R\` or from \`git remote origin\` in the current directory.\n\n## Which repos you can reach\n\nTokens only cover the GitHub repos connected to this drone (its own repo plus any added with \`hatchery repo connect\`). A request for any other repo is refused with HTTP 403 and an explanation on stderr. If you need such a repo, tell the user to run on the hatchery host:\n\n\`\`\`sh\nhatchery repo connect <this-drone-repo> <org/repo>\n\`\`\`\n\n(with \`--github\` if this drone lives on Forgejo). Never work around a denial.\n\n## If gh fails\n\nThe wrapper prints the reason on stderr. To debug, fetch a token by hand:\n\n\`\`\`sh\n/usr/local/bin/hatchery-token org=<org>\n\`\`\`\n\n## NEVER do these\n\n- \`gh auth login\`\n- \`export GH_TOKEN=...\` with a hardcoded value\n- Storing tokens anywhere\n- Using any other credentials to reach a repo that is not connected\n\n## 403 "Resource not accessible by integration"\n\nThe GitHub App lacks permission for this operation (e.g. creating repos), or is not installed on that repo/org. Tell the user — do not work around it.\n\n${claudeAuthSection(claudeAuth)}`);
   }
 
   const allRepos = parsed.provider === "forgejo"
@@ -353,7 +359,7 @@ export async function spawn(docker: Docker, repoArg: string, config: Config, ext
   if (parsed.provider === "github") {
     writeRepos(config.socketDir, name, [parsed.repo, ...extraRepos]);
   }
-  await devcontainerUp(docker, repoDir, workspaceDir, devcontainerConfig, name, allRepos, config, remoteEnvs, globalHostKey, kvm);
+  await devcontainerUp(docker, repoDir, workspaceDir, devcontainerConfig, name, allRepos, config, remoteEnvs, globalHostKey, kvm, timeoutMinutes);
 
   // Run lifecycle commands (postCreateCommand, postStartCommand, dotfiles, etc.)
   // If the project's updateContentCommand fails, devcontainer skips postStartCommand entirely,
@@ -365,6 +371,10 @@ export async function spawn(docker: Docker, repoArg: string, config: Config, ext
     console.log("Warning: run-user-commands failed — running hatchery-post-start directly");
     await runPostStart(docker, name, remoteEnvs);
   }
+
+  // The feature installs token mode; a rebuilt container needs the switch again.
+  const spawned = await findDrone(docker, name);
+  if (spawned) await applyClaudeAuth(docker, spawned, claudeAuth);
 
   const user = getRemoteUser(devcontainerConfig);
   const vscodeUri = `vscode://vscode-remote/ssh-remote+${name}/workspaces/worktrees/main`;
@@ -385,6 +395,7 @@ async function devcontainerUp(
   remoteEnvs: [string, string][],
   globalHostKey: string,
   kvm = false,
+  timeoutMinutes = 15,
 ): Promise<void> {
   const devcontainerBin = resolve("node_modules/.bin/devcontainer");
 
@@ -447,7 +458,7 @@ async function devcontainerUp(
   child.unref();
 
   // Poll until the container is running
-  const deadline = Date.now() + 300_000;
+  const deadline = Date.now() + timeoutMinutes * 60_000;
   while (Date.now() < deadline) {
     const drone = await findDrone(docker, name);
     if (drone && drone.state === "running") {
@@ -462,7 +473,7 @@ async function devcontainerUp(
 
   try { process.kill(-child.pid!, "SIGTERM"); } catch {}
   localFeatureCleanup?.();
-  throw new HatcheryError(msg.spawnTimeout);
+  throw new HatcheryError(msg.spawnTimeout(timeoutMinutes));
 }
 
 async function runPostStart(

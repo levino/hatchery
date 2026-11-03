@@ -18,6 +18,11 @@ export const msg = {
   accountLogin: (path: string) =>
     `  ⚠ Infested: full Claude account login in this drone (${path}).\n` +
     "    Inside the drone: 'env -u CLAUDE_CODE_OAUTH_TOKEN claude', /logout, then connect-claude.",
+  claudeAuthSet: (mode: string, pending: boolean) =>
+    (mode === "login"
+      ? "Claude auth: login. In the drone: claude, then /login (open shells: unset CLAUDE_CODE_OAUTH_TOKEN)."
+      : "Claude auth: token. In the drone: /logout if logged in, then connect-claude.") +
+    (pending ? "\n  Drone not running — applied on the next unburrow." : ""),
   noDrones:"The hive is empty. Spawn some drones.",
   repoNotFound: "We require more minerals.",
   tooManyDrones: "Spawn more overlords. Insufficient vespene gas.",
@@ -28,8 +33,8 @@ export const msg = {
   socketRemoved: "Extractor offline.",
   tokenRefreshed: "Essence absorbed.",
   recovering: "Rebuilding creep network...",
-  spawnTimeout:
-    "Container did not start within 5 minutes. Check Docker logs for details.\n  Drone lost in the Nydus Network — spawning sequence timed out.",
+  spawnTimeout: (minutes: number) =>
+    `Container did not start within ${minutes} minutes (raise with --timeout). Check Docker logs for details.\n  Drone lost in the Nydus Network — spawning sequence timed out.`,
   updating: "Absorbing latest mutations...",
   updateFailed: "Pull failed — spawning with existing genetic material. Adapt or perish.",
   noEvolutionPlan:
