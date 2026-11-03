@@ -16,6 +16,7 @@ import {
 } from "./docker.ts";
 import type { Config, ForgejoHost } from "./config.ts";
 import { msg, HatcheryError } from "./zerg.ts";
+import { waitForRunning } from "./wait-up.ts";
 import { randomBytes } from "node:crypto";
 import { applyClaudeAuth, claudeAuthSection, readClaudeAuthMode, writeClaudeAuthMode, type ClaudeAuthMode } from "./claude-auth.ts";
 
@@ -457,23 +458,30 @@ async function devcontainerUp(
   });
   child.unref();
 
-  // Poll until the container is running
+  // Poll until the container is running; fail fast if the build fails.
   const deadline = Date.now() + timeoutMinutes * 60_000;
-  while (Date.now() < deadline) {
-    const drone = await findDrone(docker, name);
-    if (drone && drone.state === "running") {
-      await ensureRestartPolicy(docker, drone.id);
-      try { process.kill(-child.pid!, "SIGTERM"); } catch {}
-      localFeatureCleanup?.();
-      kvmCfg.cleanup?.();
-      return;
-    }
-    await new Promise((r) => setTimeout(r, 2000));
+  let drone: Awaited<ReturnType<typeof findDrone>>;
+  const cleanup = () => {
+    try { process.kill(-child.pid!, "SIGTERM"); } catch {}
+    localFeatureCleanup?.();
+    kvmCfg.cleanup?.();
+  };
+  try {
+    const running = await waitForRunning(
+      async () => {
+        drone = await findDrone(docker, name);
+        return !!drone && drone.state === "running";
+      },
+      child,
+      deadline,
+    );
+    if (!running) throw new HatcheryError(msg.spawnTimeout(timeoutMinutes));
+  } catch (e) {
+    cleanup();
+    throw e;
   }
-
-  try { process.kill(-child.pid!, "SIGTERM"); } catch {}
-  localFeatureCleanup?.();
-  throw new HatcheryError(msg.spawnTimeout(timeoutMinutes));
+  await ensureRestartPolicy(docker, drone!.id);
+  cleanup();
 }
 
 async function runPostStart(
