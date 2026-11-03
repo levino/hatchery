@@ -29,30 +29,10 @@ TOKEN
 chmod +x /usr/local/bin/hatchery-token
 
 # --- git credential helper (GitHub) ---
-cat > /usr/local/bin/git-credential-hatchery <<'CRED'
-#!/bin/sh
-case "$1" in
-  get)
-    REPO=""
-    while IFS= read -r line && [ -n "$line" ]; do
-      case "$line" in
-        path=*) REPO="${line#path=}"; REPO="${REPO#/}"; REPO="${REPO%.git}" ;;
-      esac
-    done
-    if [ -n "$REPO" ]; then
-      T=$(/usr/local/bin/hatchery-token "repo=${REPO}") || exit 1
-    else
-      T=$(/usr/local/bin/hatchery-token) || exit 1
-    fi
-    echo "protocol=https"
-    echo "host=github.com"
-    echo "username=x-access-token"
-    echo "password=$T"
-    ;;
-esac
-CRED
-chmod +x /usr/local/bin/git-credential-hatchery
+install -m 755 "$(dirname "$0")/git-credential-hatchery" /usr/local/bin/git-credential-hatchery
 git config --system credential.https://github.com.helper /usr/local/bin/git-credential-hatchery
+# git only sends path=<org>/<repo> to the helper with useHttpPath; without it
+# every repo outside the default org gets the wrong token (issue #1).
 git config --system credential.https://github.com.useHttpPath true
 git config --system url."https://github.com/".insteadOf "git@github.com:"
 
@@ -349,7 +329,8 @@ You are running inside a Hatchery drone — a devcontainer managed by Hatchery.
 - Git and GitHub credentials are provided automatically by the **hatchery credential helper**
 - The credential helper fetches short-lived tokens from a Unix socket at `/var/run/hatchery-sockets/creds.sock`
 - The `gh` CLI is wrapped to automatically use these tokens
-- Tokens are scoped to specific repositories via a GitHub App installation
+- Tokens are scoped to specific repositories via a GitHub App installation; the helper requests a token per repo (`credential.useHttpPath=true`), so repos in several orgs work as long as the drone is connected to them
+- Repos outside the drone's connected list are refused (HTTP 403); don't work around it
 
 ## Critical Rules
 
