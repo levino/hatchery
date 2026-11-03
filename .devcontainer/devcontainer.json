@@ -1,0 +1,15 @@
+{
+  "name": "hatchery",
+  // Node 22 like CI; Docker-in-Docker to try spawn flows inside the drone
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:1-22-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  "updateContentCommand": "npm ci",
+  "remoteUser": "node",
+  "customizations": {
+    "vscode": {
+      "extensions": ["anthropic.claude-code"]
+    }
+  }
+}
