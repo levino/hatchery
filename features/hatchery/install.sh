@@ -151,7 +151,8 @@ fi
 # only the OAuth scope user:inference — no connectors, no profile, no
 # sessions — and that limit is enforced by Anthropic, not by the drone.
 # connect-claude keeps the token on tmpfs (/dev/shm: never on disk, gone when
-# the drone stops), and every new shell exports it as CLAUDE_CODE_OAUTH_TOKEN.
+# the drone stops), and every shell exports it as CLAUDE_CODE_OAUTH_TOKEN, and a claude shell
+# function re-reads it per call so already-open shells pick it up too.
 # A full `/login` would instead write a full-scope login into the bind-mounted
 # CLAUDE_CONFIG_DIR, i.e. onto the host, persistently.
 mkdir -p /etc/claude-code/managed-settings.d
@@ -160,12 +161,30 @@ echo '{ "disableClaudeAiConnectors": true }' > /etc/claude-code/managed-settings
 
 cat > /etc/hatchery-claude-env.sh <<'ENV'
 # Export this drone's inference-only Claude token, if connect-claude has run.
-_hatchery_ct="/dev/shm/hatchery-claude-$(id -u)/token"
-if [ -r "$_hatchery_ct" ] && [ "$(cat /etc/hatchery-claude-auth 2>/dev/null)" != login ]; then
-  CLAUDE_CODE_OAUTH_TOKEN=$(cat "$_hatchery_ct")
+# Shells that started before connect-claude never re-source this file, so the
+# claude function below re-reads the tmpfs token on every invocation.
+_hatchery_claude_token() {
+  [ -r "/dev/shm/hatchery-claude-$(id -u)/token" ] \
+    && [ "$(cat /etc/hatchery-claude-auth 2>/dev/null)" != login ] \
+    && cat "/dev/shm/hatchery-claude-$(id -u)/token"
+}
+claude() {
+  _hatchery_t=$(_hatchery_claude_token 2>/dev/null)
+  if [ -n "$_hatchery_t" ]; then
+    CLAUDE_CODE_OAUTH_TOKEN=$_hatchery_t command claude "$@"
+  else
+    command claude "$@"
+  fi
+  _hatchery_rc=$?
+  unset _hatchery_t
+  return $_hatchery_rc
+}
+_hatchery_t=$(_hatchery_claude_token 2>/dev/null)
+if [ -n "$_hatchery_t" ]; then
+  CLAUDE_CODE_OAUTH_TOKEN=$_hatchery_t
   export CLAUDE_CODE_OAUTH_TOKEN
 fi
-unset _hatchery_ct
+unset _hatchery_t
 ENV
 ln -sf /etc/hatchery-claude-env.sh /etc/profile.d/hatchery-claude.sh
 # Debian's zsh never reads /etc/profile.d (see above): zshenv covers every zsh,
@@ -277,8 +296,8 @@ esac
 printf '%s' "$TOKEN" > "$TOKEN_FILE"
 date -u +%Y-%m-%d > "$DIR/created"
 
-echo "Stored in RAM ($TOKEN_FILE). New shells use it automatically."
-echo "For this shell:  . /etc/hatchery-claude-env.sh"
+echo "Stored in RAM ($TOKEN_FILE). Every shell, including ones already open, uses it"
+echo "automatically when you run claude; no need to source anything."
 echo "It is gone when the drone stops; run connect-claude again after unburrow."
 CONNECT
 chmod +x /usr/local/bin/connect-claude
