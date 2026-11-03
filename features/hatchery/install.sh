@@ -198,7 +198,7 @@ for rc in /etc/zsh/zshenv /etc/bash.bashrc; do
 done
 
 cat > /usr/local/bin/connect-claude <<'CONNECT'
-#!/bin/sh
+#!/bin/bash
 # connect-claude — give this drone model access with an inference-only token.
 #   connect-claude               run `claude setup-token`, store the token
 #   connect-claude --status      show whether a token is stored, and its age
@@ -247,18 +247,28 @@ fi
 cat <<'EOF'
 Running `claude setup-token`. Open the link, approve, and paste the code back.
 The consent page should ask for model access only. If it asks for connectors
-or your profile, abort: that is a full login, not an inference-only token.
+or your profile, abort with Ctrl+C: that is a full login, not an
+inference-only token.
 
 EOF
 umask 077
 mkdir -p "$DIR"
 chmod 700 "$DIR"
 LOG="$DIR/setup-token.log"
-trap 'rm -f "$LOG"; stty echo 2>/dev/null || true' EXIT INT TERM
+export DONE="$DIR/setup-token.done"
+rm -f "$DONE"
+trap 'rm -f "$LOG" "$DONE"; stty echo 2>/dev/null || true' EXIT
+trap 'echo; echo "Aborted, nothing stored."; exit 130' INT TERM
 # setup-token only prints the token, it stores nothing. Record the session on
 # tmpfs and read the token from it, so it isn't pasted a second time (people
 # paste the login code again by mistake).
-script -q -e -c 'env -u CLAUDE_CODE_OAUTH_TOKEN claude setup-token' "$LOG"
+# setup-token ignores Ctrl+C, and `script` would put the terminal in raw mode,
+# so there was no way out. Feed it line by line from the terminal in cooked
+# mode instead: Ctrl+C stays a signal, and Enter is sent as the \r it expects.
+while [ ! -e "$DONE" ]; do
+  if IFS= read -r -t 1 line; then printf '%s\r' "$line"; fi
+done < /dev/tty \
+  | script -q -e -c 'env -u CLAUDE_CODE_OAUTH_TOKEN claude setup-token; touch "$DONE"' "$LOG"
 # Strip escape sequences, then join the token's wrapped lines up to the next
 # blank line or the "Store this token securely" hint that follows it.
 TOKEN=$(sed 's/\x1b\[[0-9;?]*[A-Za-z~]//g; s/\x1b[]()][^\x07\x1b]*//g; s/\r//g' "$LOG" \
